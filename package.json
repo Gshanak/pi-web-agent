@@ -1,0 +1,14 @@
+{
+  "name": "pi-web",
+  "version": "1.0.0",
+  "description": "Browser-based coding agent powered by OpenRouter",
+  "type": "module",
+  "scripts": {
+    "start": "node backend/server.js",
+    "dev": "node backend/server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "ws": "^8.18.0"
+  }
+}
