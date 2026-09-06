@@ -3,8 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "node backend/server.js",
-    "postinstall": "node -e \"const fs=require('fs'),https=require('https'),path=require('path');const dir=path.join('public','vendor');if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});const files=[['highlight.min.js','https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js'],['github-dark.min.css','https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css']];files.forEach(([name,url])=>{if(!fs.existsSync(path.join(dir,name))){https.get(url,res=>{if(res.statusCode===302){https.get(res.headers.location,res2=>{let d='';res2.on('data',c=>d+=c);res2.on('end',()=>fs.writeFileSync(path.join(dir,name),d))})}else{let d='';res.on('data',c=>d+=c);res.on('end',()=>fs.writeFileSync(path.join(dir,name),d))}})}})\""
+    "start": "node backend/server.js"
   },
   "dependencies": {
     "express": "^4.21.0",

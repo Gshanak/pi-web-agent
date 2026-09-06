@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax check
+        run: node --check backend/server.js
+
+      - name: Start server and smoke test
+        run: |
+          OPENROUTER_API_KEY=test-key PORT=3000 node backend/server.js &
+          SERVER_PID=$!
+          sleep 2
+          curl -s http://localhost:3000/ | grep -q "Pi Web" && echo "Homepage OK"
+          curl -s http://localhost:3000/api/projects | grep -q "projects" && echo "API OK"
+          kill $SERVER_PID
