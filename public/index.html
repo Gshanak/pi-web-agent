@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Pi Web — Coding Agent</title>
   <link rel="stylesheet" href="/css/style.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <link rel="stylesheet" href="/vendor/github-dark.min.css">
+  <script src="/vendor/highlight.min.js"></script>
 </head>
 <body>
   <!-- Top Bar -->
@@ -70,7 +70,7 @@
           <span>Live Preview</span>
           <button id="refreshPreviewBtn" class="btn-icon" title="Refresh Preview">↻</button>
         </div>
-        <iframe id="previewFrame" class="preview-frame" sandbox="allow-scripts allow-modals allow-forms allow-same-origin"></iframe>
+        <iframe id="previewFrame" class="preview-frame" sandbox="allow-scripts allow-modals allow-forms"></iframe>
       </div>
       <div id="terminalContainer" class="terminal-container" style="display:none;">
         <div class="terminal-header">
