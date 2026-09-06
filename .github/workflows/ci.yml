@@ -28,11 +28,5 @@ jobs:
       - name: Syntax check
         run: node --check backend/server.js
 
-      - name: Start server and smoke test
-        run: |
-          OPENROUTER_API_KEY=test-key PORT=3000 node backend/server.js &
-          SERVER_PID=$!
-          sleep 2
-          curl -s http://localhost:3000/ | grep -q "Pi Web" && echo "Homepage OK"
-          curl -s http://localhost:3000/api/projects | grep -q "projects" && echo "API OK"
-          kill $SERVER_PID
+      - name: Run test suite
+        run: npm test
