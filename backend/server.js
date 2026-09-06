@@ -4,9 +4,17 @@ import http from "http";
 import path from "path";
 import fs from "fs";
 import fsp from "fs/promises";
-import { exec, spawn } from "child_process";
+import { exec } from "child_process";
 import os from "os";
 import { fileURLToPath } from "url";
+
+// Global error handlers to prevent server crashes
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught exception:", err.message);
+});
+process.on("unhandledRejection", (err) => {
+  console.error("Unhandled rejection:", err?.message || err);
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,6 +25,41 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
 const DEFAULT_MODEL = process.env.OPENROUTER_MODEL || "deepseek/deepseek-chat-v3-0324:free";
 const PROJECTS_DIR = path.join(__dirname, "..", "projects");
 
+// F17: Server-side model allow-list — only allow free models
+const ALLOWED_MODEL_PATTERNS = [":free", "/free"];
+function isModelAllowed(model) {
+  if (!model) return true; // fall back to default
+  return ALLOWED_MODEL_PATTERNS.some((p) => model.includes(p));
+}
+
+// F2: Command allow-list — block dangerous commands
+const BLOCKED_COMMANDS = [
+  /\brm\s+-rf\s+\//i, /sudo/i, /\bsu\s+/i, /\bchmod\s+777/i,
+  /\bcurl\s+.*\|\s*sh/i, /\bwget\s+.*\|\s*sh/i,
+  /\bmkfs/i, /\bdd\s+if=/i, /\b:(){.*:\|:&};:/i,
+  /\bkillall/i, /\bpkill\b/i, /\bshutdown/i, /\breboot/i,
+  /\bcrontab/i, /\biptables/i,
+];
+const ALLOWED_COMMAND_PREFIXES = [
+  "npm", "npx", "node", "git", "ls", "cat", "echo", "mkdir",
+  "cp", "mv", "touch", "head", "tail", "wc", "grep", "find",
+  "sort", "diff", "pwd", "which", "tsc", "vite", "parcel",
+  "webpack", "rollup", "esbuild", "sass", "less", "postcss",
+  "jest", "vitest", "mocha", "eslint", "prettier",
+  "python", "python3", "pip", "ruby", "go", "cargo", "rustc",
+  "make", "cmake", "gcc", "g++", "cc",
+];
+function isCommandAllowed(command) {
+  const cmd = command.trim();
+  // Check blocked patterns
+  for (const pattern of BLOCKED_COMMANDS) {
+    if (pattern.test(cmd)) return false;
+  }
+  // Check allowed prefixes
+  const firstWord = cmd.split(/\s+/)[0];
+  return ALLOWED_COMMAND_PREFIXES.some((p) => firstWord === p || firstWord.startsWith(p));
+}
+
 // Ensure projects directory exists
 if (!fs.existsSync(PROJECTS_DIR)) {
   fs.mkdirSync(PROJECTS_DIR, { recursive: true });
@@ -24,8 +67,41 @@ if (!fs.existsSync(PROJECTS_DIR)) {
 
 // --- Express app ---
 const app = express();
-app.use(express.json({ limit: "50mb" }));
+
+// F12: Security headers
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Permissions-Policy", "geolocation=(), camera=(), microphone=(), interest-cohort=()");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  // CSP: allow self + inline styles (for dynamic UI) + no external scripts
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:;"
+  );
+  next();
+});
+
+// F7: Reduced JSON limit from 50mb to 1mb
+app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "..", "public")));
+
+// F3: Path traversal containment — resolve and verify path stays within project dir
+function safeJoin(base, relPath) {
+  if (!relPath) return base;
+  const resolved = path.resolve(base, relPath);
+  const normalizedBase = path.resolve(base);
+  if (!resolved.startsWith(normalizedBase + path.sep) && resolved !== normalizedBase) {
+    return null; // path traversal attempt
+  }
+  return resolved;
+}
+
+// F10: Sanitize error messages — don't leak internal details
+function safeError(err) {
+  console.error("Server error:", err.message);
+  return "Internal error";
+}
 
 // REST: list models from OpenRouter
 app.get("/api/models", async (req, res) => {
@@ -43,7 +119,7 @@ app.get("/api/models", async (req, res) => {
       }));
     res.json({ models, all: (data.data || []).map((m) => ({ id: m.id, name: m.name || m.id, context: m.context_length })) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to fetch models" });
   }
 });
 
@@ -55,7 +131,7 @@ app.get("/api/projects", (req, res) => {
       .map((d) => d.name);
     res.json({ projects: dirs });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeError(err) });
   }
 });
 
@@ -74,11 +150,12 @@ app.get("/api/files", async (req, res) => {
   const { project } = req.query;
   if (!project) return res.status(400).json({ error: "Project required" });
   const dir = path.join(PROJECTS_DIR, project);
+  if (!dir.startsWith(PROJECTS_DIR)) return res.status(400).json({ error: "Invalid project" });
   try {
     const tree = await buildFileTree(dir);
     res.json({ tree });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeError(err) });
   }
 });
 
@@ -86,12 +163,15 @@ app.get("/api/files", async (req, res) => {
 app.get("/api/file", async (req, res) => {
   const { project, path: relPath } = req.query;
   if (!project || !relPath) return res.status(400).json({ error: "Project and path required" });
-  const fullPath = path.join(PROJECTS_DIR, project, relPath);
+  const projectDir = path.join(PROJECTS_DIR, project);
+  if (!projectDir.startsWith(PROJECTS_DIR)) return res.status(400).json({ error: "Invalid project" });
+  const fullPath = safeJoin(projectDir, relPath);
+  if (!fullPath) return res.status(400).json({ error: "Invalid file path" });
   try {
     const content = await fsp.readFile(fullPath, "utf-8");
     res.json({ content, path: relPath });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "File not found" });
   }
 });
 
@@ -99,23 +179,30 @@ app.get("/api/file", async (req, res) => {
 app.post("/api/file", async (req, res) => {
   const { project, path: relPath, content } = req.body;
   if (!project || !relPath) return res.status(400).json({ error: "Project and path required" });
-  const fullPath = path.join(PROJECTS_DIR, project, relPath);
+  const projectDir = path.join(PROJECTS_DIR, project);
+  if (!projectDir.startsWith(PROJECTS_DIR)) return res.status(400).json({ error: "Invalid project" });
+  const fullPath = safeJoin(projectDir, relPath);
+  if (!fullPath) return res.status(400).json({ error: "Invalid file path" });
   try {
     await fsp.mkdir(path.dirname(fullPath), { recursive: true });
     await fsp.writeFile(fullPath, content || "");
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeError(err) });
   }
 });
 
 // REST: serve preview files from a project
 app.use("/preview/:project", async (req, res, next) => {
   const { project } = req.params;
-  const relPath = req.url === "/" ? "/index.html" : req.url;
-  const fullPath = path.join(PROJECTS_DIR, project, relPath);
+  const projectDir = path.join(PROJECTS_DIR, project);
+  if (!projectDir.startsWith(PROJECTS_DIR)) return res.status(400).send("Invalid project");
+  // Strip leading slash from req.url so safeJoin treats it as relative
+  const relPath = req.url === "/" ? "index.html" : req.url.replace(/^\//, "");
+  const fullPath = safeJoin(projectDir, relPath);
+  if (!fullPath) return res.status(404).send("File not found");
   if (!fs.existsSync(fullPath)) {
-    return res.status(404).send("File not found: " + relPath);
+    return res.status(404).send("File not found");
   }
   const ext = path.extname(fullPath);
   const types = {
@@ -273,25 +360,32 @@ const TOOLS = [
 ];
 
 // --- Tool executor ---
+// F6: Track active child processes per connection for stop/cancel
+const wsChildProcesses = new Map(); // ws -> Set<child>
+
 async function executeTool(toolName, args, projectDir, ws, callId) {
-  const fullPath = path.join(projectDir, args.path || "");
-  const fullDirPath = path.join(projectDir, args.dir_path || "");
+  // F3: Path containment for all file operations
+  const fullPath = safeJoin(projectDir, args.path || "");
+  const fullDirPath = safeJoin(projectDir, args.dir_path || "");
 
   try {
     switch (toolName) {
       case "write_file": {
+        if (!fullPath) { return "Error: invalid path"; }
         await fsp.mkdir(path.dirname(fullPath), { recursive: true });
         await fsp.writeFile(fullPath, args.content || "");
         ws.send(JSON.stringify({ type: "tool_result", callId, tool: toolName, result: `File written: ${args.path}`, path: args.path }));
         return `File written successfully: ${args.path}`;
       }
       case "read_file": {
+        if (!fullPath) { return "Error: invalid path"; }
         const content = await fsp.readFile(fullPath, "utf-8");
         const truncated = content.length > 8000 ? content.slice(0, 8000) + "\n... [truncated]" : content;
         ws.send(JSON.stringify({ type: "tool_result", callId, tool: toolName, result: truncated, path: args.path }));
         return truncated;
       }
       case "edit_file": {
+        if (!fullPath) { return "Error: invalid path"; }
         const content = await fsp.readFile(fullPath, "utf-8");
         if (!content.includes(args.old_string)) {
           ws.send(JSON.stringify({ type: "tool_result", callId, tool: toolName, result: `Error: old_string not found in ${args.path}`, path: args.path }));
@@ -304,6 +398,7 @@ async function executeTool(toolName, args, projectDir, ws, callId) {
       }
       case "list_files": {
         const targetDir = args.dir_path ? fullDirPath : projectDir;
+        if (!targetDir) { return "Error: invalid directory"; }
         const entries = await fsp.readdir(targetDir, { withFileTypes: true });
         const listing = entries
           .filter((e) => !e.name.startsWith(".") && e.name !== "node_modules")
@@ -313,41 +408,54 @@ async function executeTool(toolName, args, projectDir, ws, callId) {
         return listing || "Empty directory";
       }
       case "create_directory": {
+        if (!fullPath) { return "Error: invalid path"; }
         await fsp.mkdir(fullPath, { recursive: true });
         ws.send(JSON.stringify({ type: "tool_result", callId, tool: toolName, result: `Directory created: ${args.path}`, path: args.path }));
         return `Directory created: ${args.path}`;
       }
       case "delete_file": {
+        if (!fullPath) { return "Error: invalid path"; }
         await fsp.rm(fullPath, { recursive: true, force: true });
         ws.send(JSON.stringify({ type: "tool_result", callId, tool: toolName, result: `Deleted: ${args.path}`, path: args.path }));
         return `Deleted: ${args.path}`;
       }
       case "run_command": {
+        // F2: Command allow-list check
+        if (!isCommandAllowed(args.command)) {
+          const msg = `Command blocked by safety policy: ${args.command.slice(0, 100)}`;
+          ws.send(JSON.stringify({ type: "tool_result", callId, tool: toolName, result: msg, command: args.command }));
+          return msg;
+        }
         return await new Promise((resolve) => {
           ws.send(JSON.stringify({ type: "tool_start", callId, tool: toolName, command: args.command }));
           const child = exec(args.command, {
             cwd: projectDir,
             timeout: 30000,
-            maxBuffer: 1024 * 1024 * 5,
+            maxBuffer: 1024 * 1024 * 2,
           });
+          // F6: Track child process for stop/cancel
+          if (!wsChildProcesses.has(ws)) wsChildProcesses.set(ws, new Set());
+          wsChildProcesses.get(ws).add(child);
           let stdout = "";
           let stderr = "";
           child.stdout.on("data", (data) => {
             stdout += data;
-            ws.send(JSON.stringify({ type: "tool_stream", callId, data: data.toString() }));
+            if (ws.readyState === 1) ws.send(JSON.stringify({ type: "tool_stream", callId, data: data.toString() }));
           });
           child.stderr.on("data", (data) => {
             stderr += data;
-            ws.send(JSON.stringify({ type: "tool_stream", callId, data: data.toString(), stderr: true }));
+            if (ws.readyState === 1) ws.send(JSON.stringify({ type: "tool_stream", callId, data: data.toString(), stderr: true }));
           });
           child.on("close", (code) => {
             const result = `Exit code: ${code}\n--- stdout ---\n${stdout.slice(0, 4000)}\n${stderr ? `--- stderr ---\n${stderr.slice(0, 4000)}` : ""}`;
-            ws.send(JSON.stringify({ type: "tool_result", callId, tool: toolName, result, command: args.command }));
+            if (ws.readyState === 1) ws.send(JSON.stringify({ type: "tool_result", callId, tool: toolName, result, command: args.command }));
+            wsChildProcesses.get(ws)?.delete(child);
             resolve(result);
           });
-          child.on("error", (err) => {
-            ws.send(JSON.stringify({ type: "tool_result", callId, tool: toolName, result: `Error: ${err.message}`, command: args.command }));
-            resolve(`Error: ${err.message}`);
+          child.on("error", () => {
+            if (ws.readyState === 1) ws.send(JSON.stringify({ type: "tool_result", callId, tool: toolName, result: "Command execution error", command: args.command }));
+            wsChildProcesses.get(ws)?.delete(child);
+            resolve("Command execution error");
           });
         });
       }
@@ -355,25 +463,43 @@ async function executeTool(toolName, args, projectDir, ws, callId) {
         return `Unknown tool: ${toolName}`;
     }
   } catch (err) {
-    ws.send(JSON.stringify({ type: "tool_result", callId, tool: toolName, result: `Error: ${err.message}` }));
-    return `Error: ${err.message}`;
+    console.error("Tool error:", err.message);
+    if (ws.readyState === 1) ws.send(JSON.stringify({ type: "tool_result", callId, tool: toolName, result: "Tool execution error" }));
+    return "Tool execution error";
   }
 }
 
 // --- Agent loop ---
+// F6: Track AbortControllers per connection for stop/cancel
+const wsAbortControllers = new Map(); // ws -> AbortController
+
 async function runAgentLoop(ws, messages, model, projectDir, sessionId) {
+  // F17: Validate model
+  const useModel = isModelAllowed(model) ? (model || DEFAULT_MODEL) : DEFAULT_MODEL;
+
   const conversation = [
     { role: "system", content: SYSTEM_PROMPT },
     ...messages,
   ];
 
-  let maxTurns = 20;
+  // F7: Reduced max turns from 20 to 15
+  let maxTurns = 15;
 
   for (let turn = 0; turn < maxTurns; turn++) {
-    ws.send(JSON.stringify({ type: "turn_start", turn }));
+    // F6: Check if stop was requested
+    if (wsStopped.get(ws)) {
+      ws.send(JSON.stringify({ type: "agent_done", stopped: true }));
+      return;
+    }
+
+    if (ws.readyState === 1) ws.send(JSON.stringify({ type: "turn_start", turn }));
 
     let response;
     try {
+      // F6: Use AbortController for each fetch
+      const controller = new AbortController();
+      wsAbortControllers.set(ws, controller);
+      const timeout = setTimeout(() => controller.abort(), 120000);
       response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -383,20 +509,29 @@ async function runAgentLoop(ws, messages, model, projectDir, sessionId) {
           "X-Title": "Pi Web Agent",
         },
         body: JSON.stringify({
-          model: model || DEFAULT_MODEL,
+          model: useModel,
           messages: conversation,
           tools: TOOLS,
           stream: true,
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
+      wsAbortControllers.delete(ws);
     } catch (err) {
-      ws.send(JSON.stringify({ type: "error", message: "Failed to connect to OpenRouter: " + err.message }));
+      wsAbortControllers.delete(ws);
+      if (ws.readyState !== 1) return;
+      const msg = err.name === "AbortError" ? "Request cancelled or timed out" : "Failed to connect to OpenRouter";
+      ws.send(JSON.stringify({ type: "error", message: msg }));
+      ws.send(JSON.stringify({ type: "agent_done" }));
       return;
     }
 
     if (!response.ok) {
-      const errText = await response.text();
-      ws.send(JSON.stringify({ type: "error", message: `OpenRouter API error (${response.status}): ${errText}` }));
+      let errText = "";
+      try { errText = await response.text(); } catch {}
+      if (ws.readyState === 1) ws.send(JSON.stringify({ type: "error", message: `OpenRouter API error (${response.status})` }));
+      if (ws.readyState === 1) ws.send(JSON.stringify({ type: "agent_done" }));
       return;
     }
 
@@ -408,6 +543,12 @@ async function runAgentLoop(ws, messages, model, projectDir, sessionId) {
     let toolCalls = [];
 
     while (true) {
+      // F6: Check stop during streaming
+      if (wsStopped.get(ws)) {
+        try { reader.cancel(); } catch {}
+        ws.send(JSON.stringify({ type: "agent_done", stopped: true }));
+        return;
+      }
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
@@ -427,7 +568,7 @@ async function runAgentLoop(ws, messages, model, projectDir, sessionId) {
 
           if (delta.content) {
             assistantContent += delta.content;
-            ws.send(JSON.stringify({ type: "text_stream", text: delta.content }));
+            if (ws.readyState === 1) ws.send(JSON.stringify({ type: "text_stream", text: delta.content }));
           }
 
           if (delta.tool_calls) {
@@ -446,12 +587,12 @@ async function runAgentLoop(ws, messages, model, projectDir, sessionId) {
       }
     }
 
-    ws.send(JSON.stringify({ type: "text_done", text: assistantContent }));
+    if (ws.readyState === 1) ws.send(JSON.stringify({ type: "text_done", text: assistantContent }));
 
     if (!toolCalls.length) {
       conversation.push({ role: "assistant", content: assistantContent });
-      ws.send(JSON.stringify({ type: "turn_end", turn }));
-      ws.send(JSON.stringify({ type: "agent_done" }));
+      if (ws.readyState === 1) ws.send(JSON.stringify({ type: "turn_end", turn }));
+      if (ws.readyState === 1) ws.send(JSON.stringify({ type: "agent_done" }));
       saveSession(sessionId, conversation);
       return;
     }
@@ -466,18 +607,23 @@ async function runAgentLoop(ws, messages, model, projectDir, sessionId) {
       })),
     });
 
-    ws.send(JSON.stringify({ type: "turn_end", turn }));
+    if (ws.readyState === 1) ws.send(JSON.stringify({ type: "turn_end", turn }));
 
     for (const tc of toolCalls) {
+      // F6: Check stop before each tool call
+      if (wsStopped.get(ws)) {
+        ws.send(JSON.stringify({ type: "agent_done", stopped: true }));
+        return;
+      }
       let args = {};
       try { args = JSON.parse(tc.function.arguments); } catch (e) { args = {}; }
-      ws.send(JSON.stringify({ type: "tool_call", callId: tc.id, tool: tc.function.name, args }));
+      if (ws.readyState === 1) ws.send(JSON.stringify({ type: "tool_call", callId: tc.id, tool: tc.function.name, args }));
       const result = await executeTool(tc.function.name, args, projectDir, ws, tc.id);
       conversation.push({ role: "tool", tool_call_id: tc.id, content: typeof result === "string" ? result : JSON.stringify(result) });
     }
   }
 
-  ws.send(JSON.stringify({ type: "agent_done", maxed: true }));
+  if (ws.readyState === 1) ws.send(JSON.stringify({ type: "agent_done", maxed: true }));
   saveSession(sessionId, conversation);
 }
 
@@ -507,49 +653,105 @@ function loadSession(projectName) {
 
 // --- HTTP server + WebSocket ---
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: "/ws" });
+// F7: WebSocket message size limit (256KB)
+const wss = new WebSocketServer({ server, path: "/ws", maxReceivedFrameSize: 256 * 1024 });
+
+// F6: Track stop state per connection
+const wsStopped = new Map();
 
 wss.on("connection", (ws) => {
   let currentProject = null;
   let currentModel = DEFAULT_MODEL;
   let conversationHistory = [];
+  wsStopped.set(ws, false);
 
   ws.on("message", async (raw) => {
+    // F7: Message size check
+    if (raw.length > 256 * 1024) {
+      ws.send(JSON.stringify({ type: "error", message: "Message too large" }));
+      return;
+    }
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
 
     switch (msg.type) {
       case "init": {
         currentProject = msg.project;
-        currentModel = msg.model || DEFAULT_MODEL;
+        // F17: Validate model from init
+        currentModel = isModelAllowed(msg.model) ? (msg.model || DEFAULT_MODEL) : DEFAULT_MODEL;
         conversationHistory = loadSession(currentProject);
         ws.send(JSON.stringify({ type: "init_ack", project: currentProject, model: currentModel, history: conversationHistory }));
         break;
       }
       case "set_model": {
-        currentModel = msg.model;
-        ws.send(JSON.stringify({ type: "model_changed", model: currentModel }));
+        // F17: Validate model
+        if (isModelAllowed(msg.model)) {
+          currentModel = msg.model;
+          ws.send(JSON.stringify({ type: "model_changed", model: currentModel }));
+        } else {
+          ws.send(JSON.stringify({ type: "error", message: "Model not allowed. Only free models are permitted." }));
+        }
         break;
       }
       case "chat": {
         if (!currentProject) { ws.send(JSON.stringify({ type: "error", message: "No project selected" })); break; }
         const projectDir = path.join(PROJECTS_DIR, currentProject);
+        if (!projectDir.startsWith(PROJECTS_DIR)) { ws.send(JSON.stringify({ type: "error", message: "Invalid project" })); break; }
         conversationHistory.push({ role: "user", content: msg.content });
-        ws.send(JSON.stringify({ type: "user_message", content: msg.content }));
-        await runAgentLoop(ws, conversationHistory, currentModel, projectDir, currentProject);
+        if (ws.readyState === 1) ws.send(JSON.stringify({ type: "user_message", content: msg.content }));
+        wsStopped.set(ws, false);
+        runAgentLoop(ws, conversationHistory, currentModel, projectDir, currentProject).catch((err) => {
+          console.error("Agent loop error:", err.message);
+          if (ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: "error", message: "Agent error occurred" }));
+            ws.send(JSON.stringify({ type: "agent_done" }));
+          }
+        });
         break;
       }
       case "stop": {
+        // F6: Actually abort the fetch and kill child processes
+        wsStopped.set(ws, true);
+        const controller = wsAbortControllers.get(ws);
+        if (controller) {
+          try { controller.abort(); } catch {}
+          wsAbortControllers.delete(ws);
+        }
+        const children = wsChildProcesses.get(ws);
+        if (children) {
+          for (const child of children) {
+            try { child.kill("SIGTERM"); } catch {}
+          }
+          children.clear();
+        }
         ws.send(JSON.stringify({ type: "agent_stopped" }));
         break;
       }
       case "clear_session": {
         conversationHistory = [];
-        if (currentProject) { fsp.unlink(path.join(PROJECTS_DIR, currentProject, ".pi-session.json")).catch(() => {}); }
+        if (currentProject) {
+          const sessionFile = safeJoin(path.join(PROJECTS_DIR, currentProject), ".pi-session.json");
+          if (sessionFile) fsp.unlink(sessionFile).catch(() => {});
+        }
         ws.send(JSON.stringify({ type: "session_cleared" }));
         break;
       }
     }
+  });
+
+  ws.on("close", () => {
+    // F6: Cleanup on disconnect
+    wsStopped.set(ws, true);
+    const controller = wsAbortControllers.get(ws);
+    if (controller) { try { controller.abort(); } catch {} }
+    wsAbortControllers.delete(ws);
+    const children = wsChildProcesses.get(ws);
+    if (children) {
+      for (const child of children) { try { child.kill("SIGTERM"); } catch {} }
+      children.clear();
+    }
+    wsChildProcesses.delete(ws);
+    wsStopped.delete(ws);
   });
 
   ws.send(JSON.stringify({ type: "connected", defaultModel: DEFAULT_MODEL }));
