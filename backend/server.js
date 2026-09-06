@@ -25,11 +25,44 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
 const DEFAULT_MODEL = process.env.OPENROUTER_MODEL || "deepseek/deepseek-chat-v3-0324:free";
 const PROJECTS_DIR = path.join(__dirname, "..", "projects");
 
-// F17: Server-side model allow-list — only allow free models
-const ALLOWED_MODEL_PATTERNS = [":free", "/free"];
+// F17/P8: Explicit server-side allow-list of known free model IDs
+const ALLOWED_FREE_MODELS = new Set([
+  "deepseek/deepseek-chat-v3-0324:free",
+  "deepseek/deepseek-r1:free",
+  "deepseek/deepseek-r1-distill-llama-70b:free",
+  "deepseek/deepseek-r1-distill-qwen-32b:free",
+  "deepseek/deepseek-r1-distill-qwen-14b:free",
+  "google/gemini-2.0-flash-exp:free",
+  "google/gemini-flash-1.5:free",
+  "google/gemma-2-9b-it:free",
+  "google/gemma-3-27b-it:free",
+  "meta-llama/llama-3.3-70b-instruct:free",
+  "meta-llama/llama-3.2-3b-instruct:free",
+  "meta-llama/llama-3.2-1b-instruct:free",
+  "meta-llama/llama-3.1-8b-instruct:free",
+  "mistralai/mistral-7b-instruct:free",
+  "mistralai/mistral-nemo:free",
+  "mistralai/pixtral-12b:free",
+  "qwen/qwen-2.5-72b-instruct:free",
+  "qwen/qwen-2.5-coder-32b-instruct:free",
+  "qwen/qwen-2.5-7b-instruct:free",
+  "qwen/qwen-2.5-1.5b-instruct:free",
+  "qwen/qwq-32b:free",
+  "qwen/qwq-32b-preview:free",
+  "nvidia/nemotron-nano-8b-v2:free",
+  "microsoft/phi-3-medium-128k-instruct:free",
+  "microsoft/phi-3.5-mini-128k-instruct:free",
+  "microsoft/mai-ds-r1:free",
+  "huggingfaceh4/zephyr-7b-beta:free",
+  "openchat/openchat-7b:free",
+  "teknium/openhermes-2.5-mistral-7b:free",
+  "nousresearch/nous-hermes-2-mixtral-8x7b-dpo:free",
+  "sophosympatheia/rogue-rose-103b-v0.2:free",
+  "undi95/topk-models:free",
+]);
 function isModelAllowed(model) {
   if (!model) return true; // fall back to default
-  return ALLOWED_MODEL_PATTERNS.some((p) => model.includes(p));
+  return ALLOWED_FREE_MODELS.has(model);
 }
 
 // F2: Command allow-list — block dangerous commands
@@ -74,10 +107,10 @@ app.use((req, res, next) => {
   res.setHeader("Referrer-Policy", "no-referrer");
   res.setHeader("Permissions-Policy", "geolocation=(), camera=(), microphone=(), interest-cohort=()");
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
-  // CSP: allow self + inline styles (for dynamic UI) + no external scripts
+  // P7: CSP — removed 'unsafe-inline' from script-src (all JS is from local files)
   res.setHeader(
-    "Content-Security-Policy",
-    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:;"
+    "Content-security-Policy",
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:;"
   );
   next();
 });
@@ -95,6 +128,23 @@ function safeJoin(base, relPath) {
     return null; // path traversal attempt
   }
   return resolved;
+}
+
+// P4: Symlink hardening — resolve real path and verify it stays within base
+async function safeJoinReal(base, relPath) {
+  const resolved = safeJoin(base, relPath);
+  if (!resolved) return null;
+  try {
+    const real = await fsp.realpath(resolved);
+    const realBase = await fsp.realpath(base);
+    if (!real.startsWith(realBase + path.sep) && real !== realBase) {
+      return null; // symlink points outside project
+    }
+    return real;
+  } catch {
+    // Path doesn't exist yet (e.g., write_file creating new file) — use safeJoin result
+    return resolved;
+  }
 }
 
 // F10: Sanitize error messages — don't leak internal details
@@ -149,8 +199,9 @@ app.post("/api/projects", (req, res) => {
 app.get("/api/files", async (req, res) => {
   const { project } = req.query;
   if (!project) return res.status(400).json({ error: "Project required" });
-  const dir = path.join(PROJECTS_DIR, project);
-  if (!dir.startsWith(PROJECTS_DIR)) return res.status(400).json({ error: "Invalid project" });
+  // P3: Use safeJoin for project root validation instead of startsWith
+  const dir = safeJoin(PROJECTS_DIR, project);
+  if (!dir) return res.status(400).json({ error: "Invalid project" });
   try {
     const tree = await buildFileTree(dir);
     res.json({ tree });
@@ -163,8 +214,9 @@ app.get("/api/files", async (req, res) => {
 app.get("/api/file", async (req, res) => {
   const { project, path: relPath } = req.query;
   if (!project || !relPath) return res.status(400).json({ error: "Project and path required" });
-  const projectDir = path.join(PROJECTS_DIR, project);
-  if (!projectDir.startsWith(PROJECTS_DIR)) return res.status(400).json({ error: "Invalid project" });
+  // P3: Use safeJoin for project root validation
+  const projectDir = safeJoin(PROJECTS_DIR, project);
+  if (!projectDir) return res.status(400).json({ error: "Invalid project" });
   const fullPath = safeJoin(projectDir, relPath);
   if (!fullPath) return res.status(400).json({ error: "Invalid file path" });
   try {
@@ -179,8 +231,9 @@ app.get("/api/file", async (req, res) => {
 app.post("/api/file", async (req, res) => {
   const { project, path: relPath, content } = req.body;
   if (!project || !relPath) return res.status(400).json({ error: "Project and path required" });
-  const projectDir = path.join(PROJECTS_DIR, project);
-  if (!projectDir.startsWith(PROJECTS_DIR)) return res.status(400).json({ error: "Invalid project" });
+  // P3: Use safeJoin for project root validation
+  const projectDir = safeJoin(PROJECTS_DIR, project);
+  if (!projectDir) return res.status(400).json({ error: "Invalid project" });
   const fullPath = safeJoin(projectDir, relPath);
   if (!fullPath) return res.status(400).json({ error: "Invalid file path" });
   try {
@@ -195,8 +248,9 @@ app.post("/api/file", async (req, res) => {
 // REST: serve preview files from a project
 app.use("/preview/:project", async (req, res, next) => {
   const { project } = req.params;
-  const projectDir = path.join(PROJECTS_DIR, project);
-  if (!projectDir.startsWith(PROJECTS_DIR)) return res.status(400).send("Invalid project");
+  // P3: Use safeJoin for project root validation
+  const projectDir = safeJoin(PROJECTS_DIR, project);
+  if (!projectDir) return res.status(400).send("Invalid project");
   // Strip leading slash from req.url so safeJoin treats it as relative
   const relPath = req.url === "/" ? "index.html" : req.url.replace(/^\//, "");
   const fullPath = safeJoin(projectDir, relPath);
@@ -372,6 +426,9 @@ async function executeTool(toolName, args, projectDir, ws, callId) {
     switch (toolName) {
       case "write_file": {
         if (!fullPath) { return "Error: invalid path"; }
+        // P4: Symlink check for write operations
+        const realPath = await safeJoinReal(projectDir, args.path || "");
+        if (!realPath) { return "Error: path resolves outside project (symlink detected)"; }
         await fsp.mkdir(path.dirname(fullPath), { recursive: true });
         await fsp.writeFile(fullPath, args.content || "");
         ws.send(JSON.stringify({ type: "tool_result", callId, tool: toolName, result: `File written: ${args.path}`, path: args.path }));
@@ -409,12 +466,18 @@ async function executeTool(toolName, args, projectDir, ws, callId) {
       }
       case "create_directory": {
         if (!fullPath) { return "Error: invalid path"; }
+        // P4: Symlink check for directory creation
+        const realPath = await safeJoinReal(projectDir, args.path || "");
+        if (!realPath) { return "Error: path resolves outside project (symlink detected)"; }
         await fsp.mkdir(fullPath, { recursive: true });
         ws.send(JSON.stringify({ type: "tool_result", callId, tool: toolName, result: `Directory created: ${args.path}`, path: args.path }));
         return `Directory created: ${args.path}`;
       }
       case "delete_file": {
         if (!fullPath) { return "Error: invalid path"; }
+        // P4: Symlink check for delete operations
+        const realPath = await safeJoinReal(projectDir, args.path || "");
+        if (!realPath) { return "Error: path resolves outside project (symlink detected)"; }
         await fsp.rm(fullPath, { recursive: true, force: true });
         ws.send(JSON.stringify({ type: "tool_result", callId, tool: toolName, result: `Deleted: ${args.path}`, path: args.path }));
         return `Deleted: ${args.path}`;
@@ -447,7 +510,7 @@ async function executeTool(toolName, args, projectDir, ws, callId) {
             if (ws.readyState === 1) ws.send(JSON.stringify({ type: "tool_stream", callId, data: data.toString(), stderr: true }));
           });
           child.on("close", (code) => {
-            const result = `Exit code: ${code}\n--- stdout ---\n${stdout.slice(0, 4000)}\n${stderr ? `--- stderr ---\n${stderr.slice(0, 4000)}` : ""}`;
+            const result = `Exit code: ${code}\n--- stdout ---\n${stdout.slice(0, 4000)}\n${stderr ? `--- stderr ---\n${stderr.slice(0, 4000)` : ""}`;
             if (ws.readyState === 1) ws.send(JSON.stringify({ type: "tool_result", callId, tool: toolName, result, command: args.command }));
             wsChildProcesses.get(ws)?.delete(child);
             resolve(result);
@@ -564,7 +627,7 @@ async function runAgentLoop(ws, messages, model, projectDir, sessionId) {
         try {
           const chunk = JSON.parse(data);
           const delta = chunk.choices?.[0]?.delta;
-          if (!delta) continue;
+          if (!delta) continge;
 
           if (delta.content) {
             assistantContent += delta.content;
@@ -658,6 +721,12 @@ const wss = new WebSocketServer({ server, path: "/ws", maxReceivedFrameSize: 256
 
 // F6: Track stop state per connection
 const wsStopped = new Map();
+// P1: Rate limiting — track chat request timestamps per connection
+const wsChatTimestamps = new Map(); // ws -> array of timestamps
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute window
+const RATE_LIMIT_MAX_REQUESTS = 10;  // max 10 chat requests per minute
+// P2: Track active agent run per connection
+const wsActiveRun = new Map(); // ws -> boolean
 
 wss.on("connection", (ws) => {
   let currentProject = null;
@@ -695,17 +764,36 @@ wss.on("connection", (ws) => {
       }
       case "chat": {
         if (!currentProject) { ws.send(JSON.stringify({ type: "error", message: "No project selected" })); break; }
-        const projectDir = path.join(PROJECTS_DIR, currentProject);
-        if (!projectDir.startsWith(PROJECTS_DIR)) { ws.send(JSON.stringify({ type: "error", message: "Invalid project" })); break; }
+        // P2: Prevent concurrent agent runs
+        if (wsActiveRun.get(ws)) {
+          ws.send(JSON.stringify({ type: "error", message: "An agent run is already in progress. Use Stop to cancel it first." }));
+          break;
+        }
+        // P1: Rate limiting — check request count in window
+        const now = Date.now();
+        const timestamps = wsChatTimestamps.get(ws) || [];
+        const recent = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+        if (recent.length >= RATE_LIMIT_MAX_REQUESTS) {
+          ws.send(JSON.stringify({ type: "error", message: "Rate limit exceeded. Please wait before sending more requests." }));
+          break;
+        }
+        recent.push(now);
+        wsChatTimestamps.set(ws, recent);
+        // P3: Use safeJoin for project root validation
+        const projectDir = safeJoin(PROJECTS_DIR, currentProject);
+        if (!projectDir) { ws.send(JSON.stringify({ type: "error", message: "Invalid project" })); break; }
         conversationHistory.push({ role: "user", content: msg.content });
         if (ws.readyState === 1) ws.send(JSON.stringify({ type: "user_message", content: msg.content }));
         wsStopped.set(ws, false);
+        wsActiveRun.set(ws, true);
         runAgentLoop(ws, conversationHistory, currentModel, projectDir, currentProject).catch((err) => {
           console.error("Agent loop error:", err.message);
           if (ws.readyState === 1) {
             ws.send(JSON.stringify({ type: "error", message: "Agent error occurred" }));
             ws.send(JSON.stringify({ type: "agent_done" }));
           }
+        }).finally(() => {
+          wsActiveRun.set(ws, false);
         });
         break;
       }
@@ -742,6 +830,8 @@ wss.on("connection", (ws) => {
   ws.on("close", () => {
     // F6: Cleanup on disconnect
     wsStopped.set(ws, true);
+    wsActiveRun.set(ws, false);
+    wsChatTimestamps.delete(ws);
     const controller = wsAbortControllers.get(ws);
     if (controller) { try { controller.abort(); } catch {} }
     wsAbortControllers.delete(ws);
@@ -752,6 +842,7 @@ wss.on("connection", (ws) => {
     }
     wsChildProcesses.delete(ws);
     wsStopped.delete(ws);
+    wsActiveRun.delete(ws);
   });
 
   ws.send(JSON.stringify({ type: "connected", defaultModel: DEFAULT_MODEL }));
