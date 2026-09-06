@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: pi-web-agent
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: deepseek/deepseek-chat-v3-0324:free
+      - key: PORT
+        value: 3000

@@ -14,7 +14,7 @@ A browser-based coding agent powered by OpenRouter free models. Built by extract
 - **Streaming responses** — See the agent's output in real-time
 - **Tool calling** — Agent can read, write, edit, delete files and run shell commands
 
-## Setup
+## Quick Start (Local)
 
 ### 1. Get an OpenRouter API key
 
@@ -22,24 +22,56 @@ A browser-based coding agent powered by OpenRouter free models. Built by extract
 2. Sign up and get a free API key
 3. Free models are available at no cost
 
-### 2. Configure environment
+### 2. Configure and run
 
 ```bash
+git clone https://github.com/Gshanak/pi-web-agent.git
+cd pi-web-agent
 cp .env.example .env
 # Edit .env and add your key:
 # OPENROUTER_API_KEY=sk-or-v1-...
-# OPENROUTER_MODEL=deepseek/deepseek-chat-v3-0324:free
-# PORT=3000
-```
-
-### 3. Install and run
-
-```bash
 npm install
 npm start
 ```
 
 Open http://localhost:3000 in your browser.
+
+## Deploy to Render (Free Tier)
+
+Get a live web URL in 2 minutes:
+
+### Option A: One-click deploy
+
+1. Go to [render.com](https://render.com) and sign up
+2. Click **New** → **Web Service**
+3. Connect your GitHub account and select the `Gshanak/pi-web-agent` repo
+4. Render will auto-detect `render.yaml` — just click **Apply**
+5. Add your `OPENROUTER_API_KEY` as an environment variable in the Render dashboard
+6. Wait for the build to finish — you'll get a live URL like `https://pi-web-agent.onrender.com`
+
+### Option B: Manual deploy
+
+1. Fork this repo to your GitHub account
+2. Go to [render.com](https://render.com) → **New** → **Web Service**
+3. Connect your GitHub and select the forked repo
+4. Set the following:
+   - **Runtime**: Node
+   - **Build Command**: `npm install`
+   - **Start Command**: `npm start`
+5. Add environment variable:
+   - `OPENROUTER_API_KEY` = your API key
+   - `OPENROUTER_MODEL` = `deepseek/deepseek-chat-v3-0324:free` (or any free model)
+6. Click **Create Web Service**
+7. Your app will be live at `https://<your-service-name>.onrender.com`
+
+## Deploy with Docker
+
+```bash
+docker build -t pi-web-agent .
+docker run -p 3000:3000 -e OPENROUTER_API_KEY=sk-or-v1-... pi-web-agent
+```
+
+Open http://localhost:3000.
 
 ## Usage
 
@@ -60,7 +92,7 @@ Open http://localhost:3000 in your browser.
 ## Project structure
 
 ```
-pi-web/
+pi-web-agent/
 ├── backend/
 │   └── server.js        # Express + WebSocket server, agent loop, tools
 ├── public/
@@ -69,6 +101,8 @@ pi-web/
 │   │   └── style.css    # Dark IDE styling
 │   └── js/
 │       └── app.js       # Frontend logic (chat, file tree, preview, editor)
+├── Dockerfile           # Containerized deployment
+├── render.yaml          # Render.com deployment config
 ├── projects/            # User projects (created at runtime)
 ├── package.json
 ├── .env.example
