@@ -510,7 +510,7 @@ async function executeTool(toolName, args, projectDir, ws, callId) {
             if (ws.readyState === 1) ws.send(JSON.stringify({ type: "tool_stream", callId, data: data.toString(), stderr: true }));
           });
           child.on("close", (code) => {
-            const result = `Exit code: ${code}\n--- stdout ---\n${stdout.slice(0, 4000)}\n${stderr ? `--- stderr ---\n${stderr.slice(0, 4000)` : ""}`;
+            const result = `Exit code: ${code}\n--- stdout ---\n${stdout.slice(0, 4000)}\n${stderr ? `--- stderr ---\n${stderr.slice(0, 4000)}` : ""}`;
             if (ws.readyState === 1) ws.send(JSON.stringify({ type: "tool_result", callId, tool: toolName, result, command: args.command }));
             wsChildProcesses.get(ws)?.delete(child);
             resolve(result);
@@ -627,7 +627,7 @@ async function runAgentLoop(ws, messages, model, projectDir, sessionId) {
         try {
           const chunk = JSON.parse(data);
           const delta = chunk.choices?.[0]?.delta;
-          if (!delta) continge;
+          if (!delta) continue;
 
           if (delta.content) {
             assistantContent += delta.content;
