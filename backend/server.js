@@ -34,7 +34,6 @@ let ALLOWED_FREE_MODELS = new Set([
   "nvidia/nemotron-3.5-lightning:free",            // 1M context, 3B active, high-throughput
   "nvidia/nemotron-3-super-120b-a12b:free",        // 262K context, 12B active, reasoning
   "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", // 256K context, multimodal
-  "nvidia/nemotron-3.5-content-safety:free",       // 128K context, content moderation
   // MiniMax
   "minimax/minimax-m3:free",                       // 1M context, multimodal, agentic
   "minimax/minimax-m2.7:free",                     // 197K context, general purpose
@@ -54,8 +53,6 @@ let ALLOWED_FREE_MODELS = new Set([
   // InclusionAI
   "inclusionai/ling-3.0-flash-fin:free",           // 262K context, general purpose
   "inclusionai/ling-3.0-flash-sante:free",         // 262K context, general purpose
-  // Liquid AI
-  "liquid/lfm-2.5-2.6b:free",                      // 66K context, lightweight
 ]);
 function isModelAllowed(model) {
   if (!model) return true; // fall back to default
@@ -116,7 +113,7 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "..", "public")));
 
-// F3: Path traversal contaimment — resolve and verify path stays within project dir
+// F3: Path traversal contaimment — resolve and verify it stays within project dir
 function safeJoin(base, relPath) {
   if (!relPath) return base;
   const resolved = path.resolve(base, relPath);
@@ -154,17 +151,17 @@ function safeError(err) {
 app.get("/api/models", async (req, res) => {
   try {
     const resp = await fetch("https://openrouter.ai/api/v1/models", {
-      headers: { Authorization: `Bearer ${OPENROUTER_API_KEY}` },
+      headers: { Authorization: `bearer ${OPENROUTER_API_KEY}` },
     });
     const data = await resp.json();
     const models = (data.data || [])
-      .filter((m) => m.id.includes(":free") || m.pricing?.prompt === "0")
+      .filter((m) => (m.id.includes(":free") || m.pricing?.prompt === "0") && (m.supported_parameters || []).includes("tools"))
       .map((m) => ({
         id: m.id,
         name: m.name || m.id,
         context: m.context_length,
       }));
-    res.json({ models, all: (data.data || []).map((m) => ({ id: m.id, name: m.name || m.id, context: m.context_length })) });
+    res.json({ models, all: (data.data || []).map((m) => ({ id: m.id, name: m.name || m.id, context: m.context_length }) });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch models" });
   }
@@ -175,7 +172,7 @@ app.get("/api/models", async (req, res) => {
 app.get("/api/scrape-free-models", async (req, res) => {
   try {
     const resp = await fetch("https://openrouter.ai/api/v1/models", {
-      headers: { Authorization: `Bearer ${OPENROUTER_API_KEY}` },
+      headers: { Authorization: `bearer ${OPENROUTER_API_KEY}` },
     });
     const data = await resp.json();
     const allModels = data.data || [];
@@ -185,7 +182,8 @@ app.get("/api/scrape-free-models", async (req, res) => {
       .filter((m) => {
         const isFreePricing = m.pricing?.prompt === "0" && m.pricing?.completion === "0";
         const hasFreeSuffix = m.id.includes(":free");
-        return isFreePricing || hasFreeSuffix;
+        const supportsTools = (m.supported_parameters || []).includes("tools");
+        return (isFreePricing || hasFreeSuffix) && supportsTools;
       })
       .map((m) => ({
         id: m.id,
