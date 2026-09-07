@@ -79,181 +79,99 @@ function handleMessage(msg) {
     case "user_message":
       addMessage("user", msg.content);
       break;
-    case "text_stream":
-      if (!isAgentRunning) setRunning(true);
-      appendAssistantText(msg.text);
-      break;
-    case "text_done":
-      finalizeAssistantText(msg.text);
+    case "agent_text":
+      addMessage("agent", msg.content, msg.isStreaming);
       break;
     case "tool_call":
-      renderToolCard(msg.callId, msg.tool, msg.args);
-      break;
-    case "tool_start":
-      const card = document.querySelector(`[data-call-id="${msg.callId}"]`);
-      if (card) card.classList.add("running");
-      if (msg.command) appendTerminal("cmd", `$ ${msg.command}\n`);
-      break;
-    case "tool_stream":
-      appendToToolStream(msg.callId, msg.data, msg.stderr);
-      if (msg.data) appendTerminal(msg.stderr ? "err" : "out", msg.data);
+      addMessage("tool", `${msg.tool}${msg.args ? ": " + JSON.stringify(msg.args).slice(0, 200) : ""}`);
       break;
     case "tool_result":
-      updateToolResult(msg.callId, msg.result, msg.tool);
-      const card2 = document.querySelector(`[data-call-id="${msg.callId}"]`);
-      if (card2) card2.classList.remove("running");
-      if (["write_file", "edit_file", "delete_file", "create_directory"].includes(msg.tool)) {
-        loadFileTree();
-        refreshPreview();
-        if (msg.path) openFile(msg.path);
-      }
+      addMessage("tool_result", msg.result);
       break;
-    case "turn_start":
-      statusDot.className = "status-dot busy";
+    case "command_output":
+      terminalOutput.innerHTML += msg.output;
+      terminalOutput.scrollTop = terminalOutput.scrollHeight;
+      break;
+    case "file_changed":
+      loadFileTree();
+      refreshPreview();
       break;
     case "agent_done":
-      setRunning(false);
-      if (msg.maxed) addMessage("error", "Agent reached maximum turns (20). Stopping to prevent loop.");
+      isAgentRunning = false;
+      sendBtn.style.display = "";
+      stopBtn.style.display = "none";
       break;
     case "agent_stopped":
-      setRunning(false);
+      isAgentRunning = false;
+      sendBtn.style.display = "";
+      stopBtn.style.display = "none";
       break;
     case "error":
       addMessage("error", msg.message);
-      setRunning(false);
       break;
     case "model_changed":
       currentModel = msg.model;
+      modelSelect.value = currentModel;
       break;
     case "session_cleared":
       chatHistory = [];
       chatMessages.innerHTML = "";
+      addMessage("system", "Session cleared");
       break;
+    default:
+      console.log("Unknown message:", msg);
   }
 }
 
 // ===== Chat =====
-function addMessage(role, content) {
+function addMessage(role, content, isStreaming) {
   const div = document.createElement("div");
   div.className = `message ${role}`;
-  div.innerHTML = formatMessage(content);
+  if (role === "agent" && isStreaming) {
+    const last = chatMessages.lastElementChild;
+    if (last && last.classList.contains("agent") && last.dataset.streaming === "true") {
+      last.textContent += content;
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+      return;
+    }
+    div.dataset.streaming = "true";
+  }
+  div.textContent = content;
   chatMessages.appendChild(div);
-  scrollChat();
-}
-
-function formatMessage(text) {
-  if (!text) return "";
-  let html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (m, lang, code) => `<pre><code class="language-${lang}">${code.trim()}</code></pre>`);
-  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  html = html.split("\n\n").map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
-  return html;
-}
-
-let currentAssistantDiv = null;
-let currentAssistantText = "";
-
-function appendAssistantText(text) {
-  if (!currentAssistantDiv) {
-    currentAssistantDiv = document.createElement("div");
-    currentAssistantDiv.className = "message assistant";
-    chatMessages.appendChild(currentAssistantDiv);
-    currentAssistantText = "";
-  }
-  currentAssistantText += text;
-  currentAssistantDiv.innerHTML = formatMessage(currentAssistantText);
-  scrollChat();
-}
-
-function finalizeAssistantText(fullText) {
-  if (currentAssistantDiv && fullText) {
-    currentAssistantText = fullText;
-    currentAssistantDiv.innerHTML = formatMessage(fullText);
-    currentAssistantDiv.querySelectorAll("pre code").forEach((block) => {
-      try { hljs.highlightElement(block); } catch {}
-    });
-  }
-  currentAssistantDiv = null;
-  currentAssistantText = "";
+  chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
 function renderChatHistory() {
   chatMessages.innerHTML = "";
-  for (const msg of chatHistory) {
-    if (msg.role === "user") addMessage("user", msg.content);
-    else if (msg.role === "assistant" && msg.content) addMessage("assistant", msg.content);
-  }
-}
-
-function renderToolCard(callId, tool, args) {
-  const card = document.createElement("div");
-  card.className = "tool-card running";
-  card.dataset.callId = callId;
-  const icons = { write_file: "📝", read_file: "📖", edit_file: "✏️", list_files: "📂", create_directory: "📁", run_command: "⚡", delete_file: "🗑️" };
-  let argsStr = "";
-  if (tool === "run_command") argsStr = args.command || "";
-  else if (tool === "write_file") argsStr = args.path || "";
-  else if (tool === "read_file") argsStr = args.path || "";
-  else if (tool === "edit_file") argsStr = args.path || "";
-  else if (tool === "list_files") argsStr = args.dir_path || "/";
-  else if (tool === "create_directory") argsStr = args.path || "";
-  else if (tool === "delete_file") argsStr = args.path || "";
-  card.innerHTML = `<div class="tool-header"><span class="tool-icon">${icons[tool] || "🔧"}</span><span class="tool-name">${tool}</span><span class="tool-args">${escapeHtml(argsStr)}</span></div><div class="tool-result" style="display:none;"></div><div class="tool-stream" style="display:none";></div>`;
-  chatMessages.appendChild(card);
-  scrollChat();
-}
-
-function updateToolResult(callId, result, tool) {
-  const card = document.querySelector(`[data-call-id="${callId}"]`);
-  if (!card) return;
-  const resultDiv = card.querySelector(".tool-result");
-  resultDiv.textContent = result || "(no output)";
-  resultDiv.style.display = "block";
-  const streamDiv = card.querySelector(".tool-stream");
-  if (streamDiv && !streamDiv.textContent.trim()) streamDiv.style.display = "none";
-}
-
-function appendToToolStream(callId, data, stderr) {
-  const card = document.querySelector(`[data-call-id="${callId}"]`);
-  if (!card) return;
-  const streamDiv = card.querySelector(".tool-stream");
-  streamDiv.style.display = "block";
-  streamDiv.textContent += data || "";
-  scrollChat();
-}
-
-function setRunning(running) {
-  isAgentRunning = running;
-  if (running) {
-    sendBtn.style.display = "none";
-    stopBtn.style.display = "block";
-    statusDot.className = "status-dot busy";
-  } else {
-    sendBtn.style.display = "block";
-    stopBtn.style.display = "none";
-    statusDot.className = "status-dot connected";
-  }
+  chatHistory.forEach((msg) => {
+    const div = document.createElement("div");
+    div.className = `message ${msg.role}`;
+    div.textContent = msg.content;
+    if (msg.role === "agent" || msg.role === "tool_result") {
+      try { hljs.highlightElement(div); } catch {}
+    }
+    chatMessages.appendChild(div);
+  });
+  chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
 function sendMessage() {
-  const text = chatInput.value.trim();
-  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
-  if (!currentProject) { addMessage("error", "Please select or create a project first."); return; }
-  ws.send(JSON.stringify({ type: "chat", content: text }));
+  const content = chatInput.value.trim();
+  if (!content || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!currentProject) { addMessage("error", "Select or create a project first"); return; }
+  if (isAgentRunning) { addMessage("error", "Agent is running. Use Stop to cancel."); return; }
+  ws.send(JSON.stringify({ type: "chat", content }));
   chatInput.value = "";
   chatInput.style.height = "auto";
+  isAgentRunning = true;
+  sendBtn.style.display = "none";
+  stopBtn.style.display = "";
 }
 
-function scrollChat() { chatMessages.scrollTop = chatMessages.scrollHeight; }
-
-// ===== Terminal =====
-function appendTerminal(cls, text) {
-  const span = document.createElement("span");
-  span.className = cls;
-  span.textContent = text;
-  terminalOutput.appendChild(span);
-  terminalOutput.scrollTop = terminalOutput.scrollHeight;
+function stopAgent() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "stop" }));
+  }
 }
 
 // ===== File Tree =====
@@ -261,108 +179,86 @@ async function loadFileTree() {
   if (!currentProject) return;
   try {
     const resp = await fetch(`/api/files?project=${encodeURIComponent(currentProject)}`);
-    const data = await resp.json();
+    const files = await resp.json();
     fileTree.innerHTML = "";
-    renderTreeNodes(data.tree, fileTree, 0);
+    renderFileTree(files, fileTree, "");
   } catch (err) {
-    fileTree.innerHTML = `<div style="padding:8px;color:var(--text-dim);">Error loading files</div>`;
+    console.error("Failed to load file tree:", err);
   }
 }
 
-function renderTreeNodes(nodes, parent, depth) {
-  for (const node of nodes) {
+function renderFileTree(items, container, basePath) {
+  items.forEach((item) => {
+    const fullPath = basePath ? `${basePath}/${item.name}` : item.name;
     const div = document.createElement("div");
-    div.className = `tree-item ${node.type}`;
-    div.style.paddingLeft = `${12 + depth * 16}px`;
-    const icon = node.type === "dir" ? "📁" : "📄";
-    div.innerHTML = `<span>${icon}</span> <span>${escapeHtml(node.name)}</span>`;
-    if (node.type === "file") {
-      div.addEventListener("click", () => openFile(node.path));
-    } else {
-      div.addEventListener("click", () => {
-        const children = div.nextElementSibling;
-        if (children && children.tagName === "DIV") {
-          children.style.display = children.style.display === "none" ? "block" : "none";
-        }
-      });
-    }
-    parent.appendChild(div);
-    if (node.children) {
+    div.className = item.type === "dir" ? "file-item dir" : "file-item file";
+    div.textContent = (item.type === "dir" ? "📁 " : "📄 ") + item.name;
+    if (item.type === "dir" && item.children) {
       const childContainer = document.createElement("div");
-      parent.appendChild(childContainer);
-      renderTreeNodes(node.children, childContainer, depth + 1);
+      childContainer.className = "file-children";
+      childContainer.style.display = "none";
+      div.addEventListener("click", () => {
+        childContainer.style.display = childContainer.style.display === "none" ? "block" : "none";
+      });
+      renderFileTree(item.children, childContainer, fullPath);
+      div.appendChild(childContainer);
+    } else if (item.type === "file") {
+      div.addEventListener("click", () => openFile(fullPath));
     }
-  }
+    container.appendChild(div);
+  });
 }
 
-// ===== Editor =====
 async function openFile(filePath) {
-  if (!currentProject) return;
   try {
     const resp = await fetch(`/api/file?project=${encodeURIComponent(currentProject)}&path=${encodeURIComponent(filePath)}`);
     const data = await resp.json();
-    if (!openTabs.includes(filePath)) { openTabs.push(filePath); renderTabs(); }
-    activeTab = filePath;
-    renderTabs();
     editorPlaceholder.style.display = "none";
     codeView.style.display = "block";
     codeContent.textContent = data.content;
-    codeContent.className = `language-${getLang(filePath)}`;
     try { hljs.highlightElement(codeContent); } catch {}
   } catch (err) { console.error("Failed to open file:", err); }
-}
-
-function renderTabs() {
-  editorTabs.innerHTML = "";
-  for (const tab of openTabs) {
-    const t = document.createElement("div");
-    t.className = `editor-tab ${tab === activeTab ? "active" : ""}`;
-    t.textContent = tab.split("/").pop();
-    t.addEventListener("click", () => openFile(tab));
-    editorTabs.appendChild(t);
-  }
-}
-
-function getLang(path) {
-  const ext = path.split(".").pop().toLowerCase();
-  const map = { js: "javascript", ts: "typescript", html: "html", css: "css", json: "json", py: "python", md: "markdown", sh: "bash", xml: "xml", svg: "xml" };
-  return map[ext] || "plaintext";
 }
 
 // ===== Preview =====
 function refreshPreview() {
   if (!currentProject) return;
-  previewFrame.src = `/preview/${encodeURIComponent(currentProject)}/index.html`;
+  previewFrame.src = `/preview/${encodeURIComponent(currentProject)}/`;
 }
 
 // ===== Projects =====
 async function loadProjects() {
   try {
     const resp = await fetch("/api/projects");
-    const data = await resp.json();
+    const projects = await resp.json();
     projectSelect.innerHTML = '<option value="">— Select Project —</option>';
-    for (const p of data.projects) {
+    projects.forEach((p) => {
       const opt = document.createElement("option");
       opt.value = p;
       opt.textContent = p;
       projectSelect.appendChild(opt);
-    }
+    });
   } catch {}
-}
-
-async function createProject(name) {
-  try {
-    const resp = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(o name }) });
-    const data = await resp.json();
-    await loadProjects();
-    projectSelect.value = data.name;
-    selectProject(data.name);
-  } catch (err) { addMessage("error", "Failed to create project: " + err.message); }
 }
 
 function selectProject(name) {
   currentProject = name;
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "init", project: name, model: currentModel }));
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "init", project: name, model: currentModel }));
+  }
+}
+
+async function createProject(name) {
+  try {
+    const resp = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    if (resp.ok) {
+      await loadProjects();
+      projectSelect.value = name;
+      selectProject(name);
+    } else {
+      addMessage("error", "Failed to create project: " + (await resp.text()));
+    }
+  } catch (err) { addMessage("error", "Failed to create project: " + err.message); }
 }
 
 // ===== Models =====
@@ -371,141 +267,96 @@ async function loadModels() {
     const resp = await fetch("/api/models");
     const data = await resp.json();
     modelSelect.innerHTML = "";
-    const freeGroup = document.createElement("optgroup");
-    freeGroup.label = "Free Models";
-    for (const m of (data.models || [])) {
-      const opt = document.createElement("option");
-      opt.value = m.id;
-      opt.textContent = `${m.name} (${m.context ? (m.context/1000)+"k" : "?"})`;
-      freeGroup.appendChild(opt);
+    if (data.models && data.models.length) {
+      const group = document.createElement("optgroup");
+      group.label = "Free Models";
+      data.models.forEach((m) => {
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.textContent = m.name;
+        group.appendChild(opt);
+      });
+      modelSelect.appendChild(group);
     }
-    modelSelect.appendChild(freeGroup);
-    const allGroup = document.createElement("optgroup");
-    allGroup.label = "All Models";
-    for (const m of (data.all || []).slice(0, 50)) {
-      const opt = document.createElement("option");
-      opt.value = m.id;
-      opt.textContent = `${m.name} (${m.context ? (m.context/1000)+"k" : "?"})`;
-      allGroup.appendChild(opt);
+    if (data.all && data.all.length) {
+      const group = document.createElement("optgroup");
+      group.label = "All Models";
+      data.all.slice(0, 50).forEach((m) => {
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.textContent = m.name;
+        group.appendChild(opt);
+      });
+      modelSelect.appendChild(group);
     }
-    modelSelect.appendChild(allGroup);
     modelSelect.value = currentModel;
   } catch {}
 }
 
-// ===== Utility =====
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-// ===== Refresh Models (Scrape & Update) =====
-let scrapedModels = [];
-
+// ===== Refresh Models Modal =====
 async function openRefreshModelsModal() {
   refreshModelsModal.style.display = "flex";
   scrapeLoading.style.display = "block";
-  scrapeLoading.textContent = "Fetching latest free models from OpenRouter...";
   scrapeResults.style.display = "none";
   confirmRefreshModels.style.display = "none";
-  scrapedModels = [];
 
   try {
     const resp = await fetch("/api/scrape-free-models");
+    if (!resp.ok) { scrapeLoading.textContent = "Failed to fetch models: " + resp.status; return; }
     const data = await resp.json();
-
-    if (data.error) {
-      scrapeLoading.textContent = "Error: " + data.error;
-      return;
-    }
-
-    scrapedModels = data.models || [];
-    const currentAllowed = new Set(data.currentAllowed || []);
-
-    if (scrapedModels.length === 0) {
-      scrapeLoading.textContent = "No free models found on OpenRouter.";
-      return;
-    }
-
-    // Render model list with checkboxes
-    scrapeModelList.innerHTML = "";
-    for (const m of scrapedModels) {
-      const row = document.createElement("label");
-      row.style.cssText = "display:flex;align-items:center;gap:8px;padding:6px 4px;cursor:pointer;border-bottom:1px solid var(--border);";
-
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = m.currentlyAllowed || currentAllowed.has(m.id);
-      cb.dataset.modelId = m.id;
-      cb.style.cssText = "margin:0;";
-
-      const label = document.createElement("span");
-      label.style.cssText = "flex:1;font-size:13px;";
-      const ctxStr = m.context >= 1000000 ? (m.context / 1000000) + "M" : Math.round(m.context / 1000) + "K";
-      label.innerHTML = `<strong>${escapeHtml(m.name)}</strong> <span style="color:var(--text-dim);">— ${ctxStr} context, ${escapeHtml(m.modality)}</span>`;
-
-      const idSpan = document.createElement("span");
-      idSpan.style.cssText = "font-size:11px;color:var(--text-dim);font-family:monospace;";
-      idSpan.textContent = m.id;
-
-      row.appendChild(cb);
-      row.appendChild(label);
-      row.appendChild(idSpan);
-      scrapeModelList.appendChild(row);
-    }
-
-    scrapeModelCount.textContent = scrapedModels.length + " free models found";
     scrapeLoading.style.display = "none";
     scrapeResults.style.display = "block";
-    confirmRefreshModels.style.display = "inline-block";
+    confirmRefreshModels.style.display = "";
+    scrapeModelList.innerHTML = "";
+
+    if (data.models && data.models.length) {
+      scrapeModelCount.textContent = `${data.models.length} free models found`;
+      data.models.forEach((m) => {
+        const label = document.createElement("label");
+        label.style.cssText = "display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.value = m.id;
+        cb.checked = m.allowed || false;
+        const text = document.createElement("span");
+        text.textContent = `${m.name || m.id} (${m.context || "unknown"} ctx)`;
+        label.appendChild(cb);
+        label.appendChild(text);
+        scrapeModelList.appendChild(label);
+      });
+    } else {
+      scrapeModelList.innerHTML = "<p>No free models found.</p>";
+    }
   } catch (err) {
-    scrapeLoading.textContent = "Error fetching models: " + err.message;
+    scrapeLoading.textContent = "Error: " + err.message;
   }
 }
 
 async function confirmUpdateModels() {
-  const checkboxes = scrapeModelList.querySelectorAll("input[type=checkbox]");
-  const selected = [];
-  for (const cb of checkboxes) {
-    if (cb.checked) selected.push(cb.dataset.modelId);
-  }
-
-  if (selected.length === 0) {
-    addMessage("error", "Select at least one model to update the allow-list.");
-    return;
-  }
-
-  confirmRefreshModels.textContent = "Updating...";
-  confirmRefreshModels.disabled = true;
+  const checkboxes = scrapeModelList.querySelectorAll("input[type=checkbox]:checked");
+  const modelIds = Array.from(checkboxes).map((cb) => cb.value);
 
   try {
     const resp = await fetch("/api/update-free-models", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ models: selected }),
+      body: JSON.stringify({ models: modelIds }),
     });
-    const data = await resp.json();
-
-    if (data.error) {
-      addMessage("error", "Failed to update: " + data.error);
-    } else {
-      addMessage("assistant", `✅ Allow-list updated: ${data.count} free models now permitted. Default: ${data.defaultModel}`);
-      // Reload the model dropdown
-      loadModels();
+    if (resp.ok) {
       refreshModelsModal.style.display = "none";
+      await loadModels();
+      addMessage("system", `Updated allow-list with ${modelIds.length} free models`);
+    } else {
+      addMessage("error", "Failed to update models: " + (await resp.text()));
     }
   } catch (err) {
-    addMessage("error", "Error updating models: " + err.message);
+    addMessage("error", "Failed to update models: " + err.message);
   }
-
-  confirmRefreshModels.textContent = "Update Allow-List";
-  confirmRefreshModels.disabled = false;
 }
 
 // ===== Event Listeners =====
 sendBtn.addEventListener("click", sendMessage);
-stopBtn.addEventListener("click", () => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "stop" })); });
+stopBtn.addEventListener("click", stopAgent);
 chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
 chatInput.addEventListener("input", () => { chatInput.style.height = "auto"; chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + "px"; });
 projectSelect.addEventListener("change", () => { const val = projectSelect.value; if (val) selectProject(val); });
