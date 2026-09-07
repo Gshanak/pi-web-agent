@@ -1,4 +1,4 @@
-FROM node:22-slim
+FROM node:22.22.0-slim
 
 WORKDIR /app
 
@@ -8,7 +8,7 @@ RUN npm ci --omit=dev
 COPY . .
 
 ENV PORT=3000
-ENV OPENROUTER_MODEL=deepseek/deepseek-chat-v3-0324:free
+ENV OPENROUTER_MODEL=nvidia/nemotron-3-ultra-550b-a55b:free
 
 EXPOSE 3000
 
