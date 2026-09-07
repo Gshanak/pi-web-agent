@@ -2,143 +2,273 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pi Web — Coding Agent</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Pi Web Agent</title>
   <link rel="stylesheet" href="/css/style.css">
-  <link rel="stylesheet" href="/vendor/github-dark.min.css">
-  <script src="/vendor/highlight.min.js"></script>
 </head>
 <body>
-  <!-- Top Bar -->
-  <div id="topbar">
-    <div class="topbar-left">
-      <span class="logo">π</span>
-      <span class="title">Pi Web Agent</span>
-    </div>
-    <div class="topbar-center">
-      <select id="modelSelect" title="Select Model"></select>
-      <select id="projectSelect" title="Select Project">
-        <option value="">— Select Project —</option>
-      </select>
-      <button id="newProjectBtn" class="btn-small" title="New Project">+ New</button>
-      <button id="refreshModelsBtn" class="btn-small" title="Scrape & Update Free Models from OpenRouter">⟳ Models</button>
-    </div>
-    <div class="topbar-right">
-      <button id="previewBtn" class="btn-small active" title="Toggle Preview">Preview</button>
-      <button id="terminalBtn" class="btn-small" title="Toggle Terminal">Terminal</button>
-      <button id="clearBtn" class="btn-small" title="Clear Session">Clear</button>
-      <span id="statusDot" class="status-dot disconnected"></span>
+
+  <!-- ============ ONBOARDING SCREEN ============ -->
+  <div id="onboarding" class="screen active">
+    <div class="onboarding-bg"></div>
+    <div class="onboarding-content">
+      <div class="onboarding-logo">
+        <div class="logo-circle">π</div>
+        <span class="logo-text">Pi Web Agent</span>
+      </div>
+      <div class="onboarding-cards">
+        <div class="float-card card-1">
+          <div class="float-card-icon">⌨</div>
+          <div class="float-card-text">Code<br>Generation</div>
+        </div>
+        <div class="float-card card-2">
+          <div class="float-card-icon">◐</div>
+          <div class="float-card-text">Live<br>Preview</div>
+        </div>
+        <div class="float-card card-3">
+          <div class="float-card-icon">✦</div>
+          <div class="float-card-text">AI<br>Powered</div>
+        </div>
+      </div>
+      <div class="onboarding-headline">
+        Explore <span class="gradient-text">AI</span> Conversations<br>
+        In <span class="gradient-text">Creative</span> Coding Tasks
+      </div>
+      <p class="onboarding-subtitle">A browser-based coding agent<br>powered by OpenRouter</p>
+      <div class="onboarding-dots">
+        <span class="dot active"></span>
+        <span class="dot"></span>
+        <span class="dot"></span>
+      </div>
+      <button id="startBtn" class="btn-primary">
+        Get Started
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </button>
     </div>
   </div>
 
-  <!-- Main Layout -->
-  <div id="main">
-    <!-- Sidebar: File Tree -->
-    <div id="sidebar">
-      <div class="sidebar-header">
-        <span>Files</span>
-        <button id="refreshFilesBtn" class="btn-icon" title="Refresh">↻</button>
+  <!-- ============ HOME SCREEN ============ -->
+  <div id="home" class="screen">
+    <div class="home-bg"></div>
+    <div class="home-content">
+      <div class="home-header">
+        <div class="home-greeting">
+          <span class="home-logo">π</span>
+          <div>
+            <div class="home-title">Pi Web Agent</div>
+            <div class="home-subtitle">Code with AI</div>
+          </div>
+        </div>
+        <button id="refreshModelsHomeBtn" class="btn-premium">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4-6.2-4.6-6.2 4.6 2.4-7.4L2 9.4h7.6z"/></svg>
+          Models
+        </button>
+      </div>
+
+      <div class="home-cards">
+        <div class="home-card voice-card" id="voiceCard">
+          <div class="voice-icon-wrap">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/></svg>
+          </div>
+          <div class="voice-wave">
+            <span></span><span></span><span></span><span></span>
+          </div>
+          <p class="voice-text">Let's find new by using voice recording...</p>
+          <button class="btn-primary btn-sm" id="voiceChatBtn">Let's Talk</button>
+        </div>
+
+        <div class="home-card new-chat-card" id="newChatCard">
+          <div class="card-icon-wrap purple-glow">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          </div>
+          <p class="card-label">Start new project</p>
+          <svg class="card-arrow" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </div>
+
+        <div class="home-card browse-card" id="browseFilesCard">
+          <div class="card-icon-wrap purple-glow">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
+          </div>
+          <p class="card-label">Browse files</p>
+          <svg class="card-arrow" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </div>
+      </div>
+
+      <div class="recent-section">
+        <div class="recent-header">
+          <span>Recent Projects</span>
+          <select id="modelSelect" class="model-select"></select>
+        </div>
+        <div id="recentProjects" class="recent-list">
+          <div class="recent-empty">No projects yet. Create one to get started.</div>
+        </div>
+      </div>
+
+      <div class="bottom-nav">
+        <button class="nav-item active" data-screen="home">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg>
+        </button>
+        <button class="nav-item" data-screen="chat">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+        </button>
+        <button class="nav-item nav-plus" data-screen="new">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <button class="nav-item" data-screen="files">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6"/></svg>
+        </button>
+        <button class="nav-item" data-screen="preview">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ CHAT SCREEN ============ -->
+  <div id="chat" class="screen">
+    <div class="chat-bg"></div>
+    <div class="chat-content">
+      <div class="chat-header">
+        <button id="chatBackBtn" class="icon-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>
+        </button>
+        <div class="chat-model-badge" id="chatModelBadge">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4-6.2-4.6-6.2 4.6 2.4-7.4L2 9.4h7.6z"/></svg>
+          <span id="chatModelName">AI</span>
+        </div>
+        <button id="chatMenuBtn" class="icon-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+        </button>
+      </div>
+
+      <div class="chat-project-bar" id="chatProjectBar">
+        <span id="chatProjectName">No project selected</span>
+        <span id="statusDot" class="status-dot disconnected"></span>
+      </div>
+
+      <div id="chatMessages" class="chat-messages">
+        <div class="chat-welcome">
+          <div class="chat-welcome-logo">π</div>
+          <p>Start a conversation to build something amazing</p>
+        </div>
+      </div>
+
+      <div class="chat-input-area">
+        <button id="chatFileBtn" class="icon-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        </button>
+        <div class="chat-input-wrap">
+          <input id="chatInput" type="text" placeholder="Describe what you want to build..." autocomplete="off">
+        </div>
+        <button id="voiceInputBtn" class="icon-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/></svg>
+        </button>
+        <button id="sendBtn" class="btn-send">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+        </button>
+        <button id="stopBtn" class="btn-stop" style="display:none;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ FILES SCREEN ============ -->
+  <div id="files" class="screen">
+    <div class="files-bg"></div>
+    <div class="files-content">
+      <div class="files-header">
+        <button id="filesBackBtn" class="icon-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>
+        </button>
+        <span class="files-title">Files</span>
+        <button id="refreshFilesBtn" class="icon-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+        </button>
       </div>
       <div id="fileTree" class="file-tree"></div>
-    </div>
-
-    <!-- Center: Chat + Editor -->
-    <div id="center">
-      <!-- Chat Panel -->
-      <div id="chatPanel">
-        <div id="chatMessages" class="chat-messages"></div>
-        <div id="chatInputArea" class="chat-input-area">
-          <textarea id="chatInput" placeholder="Describe what you want to build... (Shift+Enter for newline)" rows="1"></textarea>
-          <button id="sendBtn" class="btn-send">Send</button>
-          <button id="stopBtn" class="btn-stop" style="display:none;">Stop</button>
+      <div id="fileViewer" class="file-viewer" style="display:none;">
+        <div class="file-viewer-header">
+          <span id="fileViewerName"></span>
+          <button id="closeFileBtn" class="icon-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
         </div>
-      </div>
-
-      <!-- Editor Panel (below chat) -->
-      <div id="editorPanel" class="editor-panel">
-        <div class="editor-tabs" id="editorTabs"></div>
-        <div id="editorContainer" class="editor-container">
-          <div id="editorPlaceholder" class="editor-placeholder">Select a file to view its contents</div>
-          <pre id="codeView" class="code-view" style="display:none;"><code id="codeContent"></code></pre>
-        </div>
+        <pre id="codeView" class="code-view"><code id="codeContent"></code></pre>
       </div>
     </div>
+  </div>
 
-    <!-- Right: Preview + Terminal -->
-    <div id="rightPanel">
-      <div id="previewContainer" class="preview-container">
-        <div class="preview-header">
-          <span>Live Preview</span>
-          <button id="refreshPreviewBtn" class="btn-icon" title="Refresh Preview">↻</button>
-        </div>
+  <!-- ============ PREVIEW SCREEN ============ -->
+  <div id="preview" class="screen">
+    <div class="preview-bg"></div>
+    <div class="preview-content">
+      <div class="preview-header">
+        <button id="previewBackBtn" class="icon-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>
+        </button>
+        <span class="preview-title">Live Preview</span>
+        <button id="refreshPreviewBtn" class="icon-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+        </button>
+      </div>
+      <div class="preview-tabs">
+        <button class="preview-tab active" data-tab="preview">Preview</button>
+        <button class="preview-tab" data-tab="terminal">Terminal</button>
+      </div>
+      <div id="previewFrameWrap" class="preview-frame-wrap">
         <iframe id="previewFrame" class="preview-frame" sandbox="allow-scripts allow-modals allow-forms"></iframe>
+        <div id="previewEmpty" class="preview-empty">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          <p>Select a project to see preview</p>
+        </div>
       </div>
-      <div id="terminalContainer" class="terminal-container" style="display:none;">
+      <div id="terminalWrap" class="terminal-wrap" style="display:none;">
         <div class="terminal-header">
           <span>Command Output</span>
-          <button id="clearTerminalBtn" class="btn-icon" title="Clear">✕</button>
+          <button id="clearTerminalBtn" class="icon-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
         </div>
         <div id="terminalOutput" class="terminal-output"></div>
       </div>
     </div>
   </div>
 
-  <!-- New Project Modal -->
+  <!-- ============ NEW PROJECT MODAL ============ -->
   <div id="newProjectModal" class="modal" style="display:none;">
+    <div class="modal-backdrop"></div>
     <div class="modal-content">
-      <h3>Create New Project</h3>
-      <input id="newProjectName" type="text" placeholder="project-name" autocomplete="off">
+      <h3 class="modal-title">Create New Project</h3>
+      <input id="newProjectName" type="text" class="modal-input" placeholder="project-name" autocomplete="off">
       <div class="modal-buttons">
-        <button id="cancelNewProject" class="btn-small">Cancel</button>
-        <button id="confirmNewProject" class="btn-small primary">Create</button>
+        <button id="cancelNewProject" class="btn-ghost">Cancel</button>
+        <button id="confirmNewProject" class="btn-primary btn-sm">Create</button>
       </div>
     </div>
   </div>
 
-  <!-- Refresh Models Modal -->
+  <!-- ============ REFRESH MODELS MODAL ============ -->
   <div id="refreshModelsModal" class="modal" style="display:none;">
-    <div class="modal-content" style="max-width:700px;max-height:80vh;overflow-y:auto;">
-      <h3>Refresh Free Models from OpenRouter</h3>
-      <p style="color:var(--text-dim);font-size:13px;margin-bottom:12px;">
-        Fetching the latest free models from OpenRouter's API. Review the list, check the ones you want to allow, then click Update.
-      </p>
-      <div id="scrapeLoading" style="text-align:center;padding:20px;color:var(--text-dim);">Fetching models...</div>
+    <div class="modal-backdrop"></div>
+    <div class="modal-content modal-large">
+      <h3 class="modal-title">Free Models from OpenRouter</h3>
+      <p class="modal-desc">Select the free models you want to allow.</p>
+      <div id="scrapeLoading" class="scrape-loading">Fetching models...</div>
       <div id="scrapeResults" style="display:none;">
-        <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center;">
-          <button id="selectAllModels" class="btn-small">Select All</button>
-          <button id="deselectAllModels" class="btn-small">Deselect All</button>
-          <span id="scrapeModelCount" style="color:var(--text-dim);font-size:12px;margin-left:auto;"></span>
+        <div class="scrape-actions">
+          <button id="selectAllModels" class="btn-ghost btn-sm">Select All</button>
+          <button id="deselectAllModels" class="btn-ghost btn-sm">Deselect All</button>
+          <span id="scrapeModelCount" class="scrape-count"></span>
         </div>
-        <div id="scrapeModelList" style="max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:8px;"></div>
+        <div id="scrapeModelList" class="scrape-list"></div>
       </div>
       <div class="modal-buttons">
-        <button id="cancelRefreshModels" class="btn-small">Cancel</button>
-        <button id="confirmRefreshModels" class="btn-small primary" style="display:none;">Update Allow-List</button>
+        <button id="cancelRefreshModels" class="btn-ghost">Cancel</button>
+        <button id="confirmRefreshModels" class="btn-primary btn-sm" style="display:none;">Update</button>
       </div>
-    </div>
-  </div>
-
-  <!-- Welcome Screen -->
-  <div id="welcomeOverlay" class="welcome-overlay">
-    <div class="welcome-content">
-      <div class="welcome-logo">π</div>
-      <h1>Pi Web Agent</h1>
-      <p>A browser-based coding agent powered by OpenRouter</p>
-      <div class="welcome-steps">
-        <div class="welcome-step">
-          <span class="step-num">1</span>
-          <span>Set your OPENROUTER_API_KEY in <code>.env</code></span>
-        </div>
-        <div class="welcome-step">
-          <span class="step-num">2</span>
-          <span>Create or select a project above</span>
-        </div>
-        <div class="welcome-step">
-          <span class="step-num">3</span>
-          <span>Describe what you want to build in the chat</span>
-        </div>
-      </div>
-      <button id="getStartedBtn" class="btn-small primary">Get Started</button>
     </div>
   </div>
 
