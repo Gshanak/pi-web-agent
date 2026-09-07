@@ -1,66 +1,53 @@
-// ===== Pi Web Agent - Frontend Application =====
+// ===== Pi Web Agent - Mobile Frontend =====
 
 // --- State ---
 let ws = null;
 let currentProject = null;
 let currentModel = "";
 let isAgentRunning = false;
-let openTabs = [];
-let activeTab = null;
 let chatHistory = [];
+let currentScreen = "onboarding";
+let recognition = null;
+let isListening = false;
 
-// --- DOM refs ---
+// --- DOM helpers ---
 const $ = (id) => document.getElementById(id);
-const modelSelect = $("modelSelect");
-const projectSelect = $("projectSelect");
-const newProjectBtn = $("newProjectBtn");
-const previewBtn = $("previewBtn");
-const terminalBtn = $("terminalBtn");
-const clearBtn = $("clearBtn");
-const statusDot = $("statusDot");
-const fileTree = $("fileTree");
-const refreshFilesBtn = $("refreshFilesBtn");
-const chatMessages = $("chatMessages");
-const chatInput = $("chatInput");
-const sendBtn = $("sendBtn");
-const stopBtn = $("stopBtn");
-const editorTabs = $("editorTabs");
-const editorPlaceholder = $("editorPlaceholder");
-const codeView = $("codeView");
-const codeContent = $("codeContent");
-const previewFrame = $("previewFrame");
-const refreshPreviewBtn = $("refreshPreviewBtn");
-const terminalOutput = $("terminalOutput");
-const clearTerminalBtn = $("clearTerminalBtn");
-const newProjectModal = $("newProjectModal");
-const newProjectName = $("newProjectName");
-const cancelNewProject = $("cancelNewProject");
-const confirmNewProject = $("confirmNewProject");
-const welcomeOverlay = $("welcomeOverlay");
-const getStartedBtn = $("getStartedBtn");
-const refreshModelsBtn = $("refreshModelsBtn");
-const refreshModelsModal = $("refreshModelsModal");
-const scrapeLoading = $("scrapeLoading");
-const scrapeResults = $("scrapeResults");
-const scrapeModelList = $("scrapeModelList");
-const scrapeModelCount = $("scrapeModelCount");
-const selectAllModels = $("selectAllModels");
-const deselectAllModels = $("deselectAllModels");
-const cancelRefreshModels = $("cancelRefreshModels");
-const confirmRefreshModels = $("confirmRefreshModels");
 
-// ===== WebSocket =====
+// --- Screen Navigation ---
+function showScreen(name) {
+  document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
+  const screen = $(name);
+  if (screen) screen.classList.add("active");
+  currentScreen = name;
+
+  // Update bottom nav
+  document.querySelectorAll(".nav-item").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.screen === name);
+  });
+
+  // Load data when entering certain screens
+  if (name === "home") { loadProjects(); loadModels(); }
+  if (name === "files" && currentProject) loadFileTree();
+  if (name === "preview" && currentProject) refreshPreview();
+}
+
+// --- WebSocket ---
 function connectWS() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   ws = new WebSocket(`${proto}//${location.host}/ws`);
 
-  ws.onopen = () => { statusDot.className = "status-dot connected"; };
-  ws.onclose = () => { statusDot.className = "status-dot disconnected"; setTimeout(connectWS, 2000); };
-  ws.onerror = () => { statusDot.className = "status-dot disconnected"; };
+  ws.onopen = () => { updateStatus("connected"); };
+  ws.onclose = () => { updateStatus("disconnected"); setTimeout(connectWS, 2000); };
+  ws.onerror = () => { updateStatus("disconnected"); };
   ws.onmessage = (event) => { handleMessage(JSON.parse(event.data)); };
 }
 
-// ===== Message Handler =====
+function updateStatus(status) {
+  const dot = $("statusDot");
+  if (dot) dot.className = `status-dot ${status}`;
+}
+
+// --- Message Handler ---
 function handleMessage(msg) {
   switch (msg.type) {
     case "connected":
@@ -70,7 +57,6 @@ function handleMessage(msg) {
       break;
     case "init_ack":
       currentModel = msg.model;
-      modelSelect.value = currentModel;
       chatHistory = msg.history || [];
       renderChatHistory();
       loadFileTree();
@@ -89,8 +75,11 @@ function handleMessage(msg) {
       addMessage("tool_result", msg.result);
       break;
     case "command_output":
-      terminalOutput.innerHTML += msg.output;
-      terminalOutput.scrollTop = terminalOutput.scrollHeight;
+      const termOut = $("terminalOutput");
+      if (termOut) {
+        termOut.innerHTML += msg.output;
+        termOut.scrollTop = termOut.scrollHeight;
+      }
       break;
     case "file_changed":
       loadFileTree();
@@ -98,74 +87,94 @@ function handleMessage(msg) {
       break;
     case "agent_done":
       isAgentRunning = false;
-      sendBtn.style.display = "";
-      stopBtn.style.display = "none";
+      $("sendBtn").style.display = "";
+      $("stopBtn").style.display = "none";
       break;
     case "agent_stopped":
       isAgentRunning = false;
-      sendBtn.style.display = "";
-      stopBtn.style.display = "none";
+      $("sendBtn").style.display = "";
+      $("stopBtn").style.display = "none";
       break;
     case "error":
       addMessage("error", msg.message);
       break;
     case "model_changed":
       currentModel = msg.model;
-      modelSelect.value = currentModel;
+      updateModelDisplay();
       break;
     case "session_cleared":
       chatHistory = [];
-      chatMessages.innerHTML = "";
-      addMessage("system", "Session cleared");
+      const cm = $("chatMessages");
+      if (cm) {
+        cm.innerHTML = '<div class="chat-welcome"><div class="chat-welcome-logo">π</div><p>Session cleared. Start a new conversation.</p></div>';
+      }
       break;
     default:
       console.log("Unknown message:", msg);
   }
 }
 
-// ===== Chat =====
+// --- Chat ---
 function addMessage(role, content, isStreaming) {
-  const div = document.createElement("div");
-  div.className = `message ${role}`;
+  const cm = $("chatMessages");
+  if (!cm) return;
+
+  // Remove welcome message
+  const welcome = cm.querySelector(".chat-welcome");
+  if (welcome) welcome.remove();
+
   if (role === "agent" && isStreaming) {
-    const last = chatMessages.lastElementChild;
+    const last = cm.lastElementChild;
     if (last && last.classList.contains("agent") && last.dataset.streaming === "true") {
       last.textContent += content;
-      chatMessages.scrollTop = chatMessages.scrollHeight;
+      cm.scrollTop = cm.scrollHeight;
       return;
     }
-    div.dataset.streaming = "true";
   }
+
+  const div = document.createElement("div");
+  div.className = `message ${role}`;
   div.textContent = content;
-  chatMessages.appendChild(div);
-  chatMessages.scrollTop = chatMessages.scrollHeight;
+  if (isStreaming) div.dataset.streaming = "true";
+  cm.appendChild(div);
+  cm.scrollTop = cm.scrollHeight;
 }
 
 function renderChatHistory() {
-  chatMessages.innerHTML = "";
+  const cm = $("chatMessages");
+  if (!cm) return;
+  cm.innerHTML = "";
+  if (!chatHistory.length) {
+    cm.innerHTML = '<div class="chat-welcome"><div class="chat-welcome-logo">π</div><p>Start a conversation to build something amazing</p></div>';
+    return;
+  }
   chatHistory.forEach((msg) => {
     const div = document.createElement("div");
     div.className = `message ${msg.role}`;
     div.textContent = msg.content;
-    if (msg.role === "agent" || msg.role === "tool_result") {
-      try { hljs.highlightElement(div); } catch {}
-    }
-    chatMessages.appendChild(div);
+    cm.appendChild(div);
   });
-  chatMessages.scrollTop = chatMessages.scrollHeight;
+  cm.scrollTop = cm.scrollHeight;
 }
 
 function sendMessage() {
-  const content = chatInput.value.trim();
+  const input = $("chatInput");
+  if (!input) return;
+  const content = input.value.trim();
   if (!content || !ws || ws.readyState !== WebSocket.OPEN) return;
-  if (!currentProject) { addMessage("error", "Select or create a project first"); return; }
-  if (isAgentRunning) { addMessage("error", "Agent is running. Use Stop to cancel."); return; }
+  if (!currentProject) {
+    addMessage("error", "Select or create a project first");
+    return;
+  }
+  if (isAgentRunning) {
+    addMessage("error", "Agent is running. Use Stop to cancel.");
+    return;
+  }
   ws.send(JSON.stringify({ type: "chat", content }));
-  chatInput.value = "";
-  chatInput.style.height = "auto";
+  input.value = "";
   isAgentRunning = true;
-  sendBtn.style.display = "none";
-  stopBtn.style.display = "";
+  $("sendBtn").style.display = "none";
+  $("stopBtn").style.display = "flex";
 }
 
 function stopAgent() {
@@ -174,14 +183,20 @@ function stopAgent() {
   }
 }
 
-// ===== File Tree =====
+// --- File Tree ---
 async function loadFileTree() {
   if (!currentProject) return;
   try {
     const resp = await fetch(`/api/files?project=${encodeURIComponent(currentProject)}`);
-    const files = await resp.json();
-    fileTree.innerHTML = "";
-    renderFileTree(files, fileTree, "");
+    const data = await resp.json();
+    const tree = $("fileTree");
+    if (!tree) return;
+    tree.innerHTML = "";
+    if (data.tree && data.tree.length) {
+      renderFileTree(data.tree, tree, "");
+    } else {
+      tree.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:24px;font-size:13px;">No files yet. Ask the AI to build something.</div>';
+    }
   } catch (err) {
     console.error("Failed to load file tree:", err);
   }
@@ -191,11 +206,11 @@ function renderFileTree(items, container, basePath) {
   items.forEach((item) => {
     const fullPath = basePath ? `${basePath}/${item.name}` : item.name;
     const div = document.createElement("div");
-    div.className = item.type === "dir" ? "file-item dir" : "file-item file";
+    div.className = item.type === "dir" ? "tree-item dir" : "tree-item file";
     div.textContent = (item.type === "dir" ? "📁 " : "📄 ") + item.name;
     if (item.type === "dir" && item.children) {
       const childContainer = document.createElement("div");
-      childContainer.className = "file-children";
+      childContainer.className = "tree-children";
       childContainer.style.display = "none";
       div.addEventListener("click", () => {
         childContainer.style.display = childContainer.style.display === "none" ? "block" : "none";
@@ -213,36 +228,64 @@ async function openFile(filePath) {
   try {
     const resp = await fetch(`/api/file?project=${encodeURIComponent(currentProject)}&path=${encodeURIComponent(filePath)}`);
     const data = await resp.json();
-    editorPlaceholder.style.display = "none";
-    codeView.style.display = "block";
-    codeContent.textContent = data.content;
-    try { hljs.highlightElement(codeContent); } catch {}
-  } catch (err) { console.error("Failed to open file:", err); }
+    const viewer = $("fileViewer");
+    const tree = $("fileTree");
+    if (viewer && tree) {
+      viewer.style.display = "flex";
+      tree.style.display = "none";
+    }
+    $("fileViewerName").textContent = filePath;
+    $("codeContent").textContent = data.content;
+  } catch (err) {
+    console.error("Failed to open file:", err);
+  }
 }
 
-// ===== Preview =====
+// --- Preview ---
 function refreshPreview() {
   if (!currentProject) return;
-  previewFrame.src = `/preview/${encodeURIComponent(currentProject)}/`;
+  const frame = $("previewFrame");
+  const empty = $("previewEmpty");
+  if (frame) {
+    frame.src = `/preview/${encodeURIComponent(currentProject)}/`;
+    frame.style.display = "block";
+    if (empty) empty.style.display = "none";
+  }
 }
 
-// ===== Projects =====
+// --- Projects ---
 async function loadProjects() {
   try {
     const resp = await fetch("/api/projects");
-    const projects = await resp.json();
-    projectSelect.innerHTML = '<option value="">— Select Project —</option>';
-    projects.forEach((p) => {
-      const opt = document.createElement("option");
-      opt.value = p;
-      opt.textContent = p;
-      projectSelect.appendChild(opt);
-    });
+    const data = await resp.json();
+    const list = $("recentProjects");
+    if (!list) return;
+    list.innerHTML = "";
+    if (data.projects && data.projects.length) {
+      data.projects.forEach((p) => {
+        const item = document.createElement("div");
+        item.className = "recent-item";
+        item.innerHTML = `
+          <div class="recent-item-icon">📁</div>
+          <div class="recent-item-text">${p}</div>
+          <svg class="recent-item-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        `;
+        item.addEventListener("click", () => {
+          selectProject(p);
+          showScreen("chat");
+        });
+        list.appendChild(item);
+      });
+    } else {
+      list.innerHTML = '<div class="recent-empty">No projects yet. Create one to get started.</div>';
+    }
   } catch {}
 }
 
 function selectProject(name) {
   currentProject = name;
+  const bar = $("chatProjectName");
+  if (bar) bar.textContent = name;
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: "init", project: name, model: currentModel }));
   }
@@ -250,23 +293,31 @@ function selectProject(name) {
 
 async function createProject(name) {
   try {
-    const resp = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    const resp = await fetch("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
     if (resp.ok) {
       await loadProjects();
-      projectSelect.value = name;
       selectProject(name);
+      showScreen("chat");
     } else {
       addMessage("error", "Failed to create project: " + (await resp.text()));
     }
-  } catch (err) { addMessage("error", "Failed to create project: " + err.message); }
+  } catch (err) {
+    addMessage("error", "Failed to create project: " + err.message);
+  }
 }
 
-// ===== Models =====
+// --- Models ---
 async function loadModels() {
   try {
     const resp = await fetch("/api/models");
     const data = await resp.json();
-    modelSelect.innerHTML = "";
+    const select = $("modelSelect");
+    if (!select) return;
+    select.innerHTML = "";
     if (data.models && data.models.length) {
       const group = document.createElement("optgroup");
       group.label = "Free Models";
@@ -276,7 +327,7 @@ async function loadModels() {
         opt.textContent = m.name;
         group.appendChild(opt);
       });
-      modelSelect.appendChild(group);
+      select.appendChild(group);
     }
     if (data.all && data.all.length) {
       const group = document.createElement("optgroup");
@@ -287,53 +338,65 @@ async function loadModels() {
         opt.textContent = m.name;
         group.appendChild(opt);
       });
-      modelSelect.appendChild(group);
+      select.appendChild(group);
     }
-    modelSelect.value = currentModel;
+    select.value = currentModel;
+    updateModelDisplay();
   } catch {}
 }
 
-// ===== Refresh Models Modal =====
+function updateModelDisplay() {
+  const select = $("modelSelect");
+  const badge = $("chatModelName");
+  if (badge) {
+    if (select && select.selectedOptions[0]) {
+      badge.textContent = select.selectedOptions[0].textContent;
+    } else {
+      badge.textContent = currentModel || "AI";
+    }
+  }
+}
+
+// --- Refresh Models Modal ---
 async function openRefreshModelsModal() {
-  refreshModelsModal.style.display = "flex";
-  scrapeLoading.style.display = "block";
-  scrapeResults.style.display = "none";
-  confirmRefreshModels.style.display = "none";
+  $("refreshModelsModal").style.display = "flex";
+  $("scrapeLoading").style.display = "block";
+  $("scrapeResults").style.display = "none";
+  $("confirmRefreshModels").style.display = "none";
 
   try {
     const resp = await fetch("/api/scrape-free-models");
-    if (!resp.ok) { scrapeLoading.textContent = "Failed to fetch models: " + resp.status; return; }
+    if (!resp.ok) { $("scrapeLoading").textContent = "Failed to fetch models: " + resp.status; return; }
     const data = await resp.json();
-    scrapeLoading.style.display = "none";
-    scrapeResults.style.display = "block";
-    confirmRefreshModels.style.display = "";
-    scrapeModelList.innerHTML = "";
+    $("scrapeLoading").style.display = "none";
+    $("scrapeResults").style.display = "block";
+    $("confirmRefreshModels").style.display = "";
+    $("scrapeModelList").innerHTML = "";
 
     if (data.models && data.models.length) {
-      scrapeModelCount.textContent = `${data.models.length} free models found`;
+      $("scrapeModelCount").textContent = `${data.models.length} free models found`;
       data.models.forEach((m) => {
         const label = document.createElement("label");
-        label.style.cssText = "display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;";
         const cb = document.createElement("input");
         cb.type = "checkbox";
         cb.value = m.id;
-        cb.checked = m.allowed || false;
+        cb.checked = m.currentlyAllowed || false;
         const text = document.createElement("span");
         text.textContent = `${m.name || m.id} (${m.context || "unknown"} ctx)`;
         label.appendChild(cb);
         label.appendChild(text);
-        scrapeModelList.appendChild(label);
+        $("scrapeModelList").appendChild(label);
       });
     } else {
-      scrapeModelList.innerHTML = "<p>No free models found.</p>";
+      $("scrapeModelList").innerHTML = "<p>No free models found.</p>";
     }
   } catch (err) {
-    scrapeLoading.textContent = "Error: " + err.message;
+    $("scrapeLoading").textContent = "Error: " + err.message;
   }
 }
 
 async function confirmUpdateModels() {
-  const checkboxes = scrapeModelList.querySelectorAll("input[type=checkbox]:checked");
+  const checkboxes = $("scrapeModelList").querySelectorAll("input[type=checkbox]:checked");
   const modelIds = Array.from(checkboxes).map((cb) => cb.value);
 
   try {
@@ -343,9 +406,8 @@ async function confirmUpdateModels() {
       body: JSON.stringify({ models: modelIds }),
     });
     if (resp.ok) {
-      refreshModelsModal.style.display = "none";
+      $("refreshModelsModal").style.display = "none";
       await loadModels();
-      addMessage("system", `Updated allow-list with ${modelIds.length} free models`);
     } else {
       addMessage("error", "Failed to update models: " + (await resp.text()));
     }
@@ -354,33 +416,151 @@ async function confirmUpdateModels() {
   }
 }
 
-// ===== Event Listeners =====
-sendBtn.addEventListener("click", sendMessage);
-stopBtn.addEventListener("click", stopAgent);
-chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
-chatInput.addEventListener("input", () => { chatInput.style.height = "auto"; chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + "px"; });
-projectSelect.addEventListener("change", () => { const val = projectSelect.value; if (val) selectProject(val); });
-modelSelect.addEventListener("change", () => { currentModel = modelSelect.value; if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "set_model", model: currentModel })); });
-newProjectBtn.addEventListener("click", () => { newProjectModal.style.display = "flex"; newProjectName.value = ""; newProjectName.focus(); });
-cancelNewProject.addEventListener("click", () => { newProjectModal.style.display = "none"; });
-confirmNewProject.addEventListener("click", () => { const name = newProjectName.value.trim(); if (name) { createProject(name); newProjectModal.style.display = "none"; } });
-newProjectName.addEventListener("keydown", (e) => { if (e.key === "Enter") confirmNewProject.click(); });
-refreshFilesBtn.addEventListener("click", loadFileTree);
-refreshPreviewBtn.addEventListener("click", refreshPreview);
-clearTerminalBtn.addEventListener("click", () => { terminalOutput.innerHTML = ""; });
-clearBtn.addEventListener("click", () => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "clear_session" })); });
-previewBtn.addEventListener("click", () => { const container = $("previewContainer"); container.style.display = container.style.display === "none" ? "flex" : "none"; previewBtn.classList.toggle("active"); });
-terminalBtn.addEventListener("click", () => { const container = $("terminalContainer"); container.style.display = container.style.display === "none" ? "flex" : "none"; terminalBtn.classList.toggle("active"); });
-getStartedBtn.addEventListener("click", () => { welcomeOverlay.style.display = "none"; });
-refreshModelsBtn.addEventListener("click", openRefreshModelsModal);
-cancelRefreshModels.addEventListener("click", () => { refreshModelsModal.style.display = "none"; });
-confirmRefreshModels.addEventListener("click", confirmUpdateModels);
-selectAllModels.addEventListener("click", () => {
-  scrapeModelList.querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = true; });
-});
-deselectAllModels.addEventListener("click", () => {
-  scrapeModelList.querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = false; });
-});
+// --- Voice Input ---
+function initVoice() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) return;
+  recognition = new SpeechRecognition();
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.lang = "en-US";
 
-// ===== Init =====
-connectWS();
+  recognition.onresult = (event) => {
+    const transcript = event.results[0][0].transcript;
+    const input = $("chatInput");
+    if (input) {
+      input.value = transcript;
+      input.focus();
+    }
+  };
+  recognition.onerror = () => { stopVoiceInput(); };
+  recognition.onend = () => { stopVoiceInput(); };
+}
+
+function toggleVoiceInput() {
+  if (!recognition) {
+    addMessage("error", "Voice input not supported on this browser");
+    return;
+  }
+  if (isListening) {
+    recognition.stop();
+    stopVoiceInput();
+  } else {
+    recognition.start();
+    isListening = true;
+    const btn = $("voiceInputBtn");
+    if (btn) btn.style.color = "var(--accent-light)";
+  }
+}
+
+function stopVoiceInput() {
+  isListening = false;
+  const btn = $("voiceInputBtn");
+  if (btn) btn.style.color = "";
+}
+
+// --- Event Listeners ---
+document.addEventListener("DOMContentLoaded", () => {
+  initVoice();
+
+  // Onboarding
+  $("startBtn").addEventListener("click", () => showScreen("home"));
+
+  // Bottom nav
+  document.querySelectorAll(".nav-item").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const target = btn.dataset.screen;
+      if (target === "new") {
+        $("newProjectModal").style.display = "flex";
+        $("newProjectName").value = "";
+        $("newProjectName").focus();
+      } else {
+        showScreen(target);
+      }
+    });
+  });
+
+  // Home cards
+  $("newChatCard").addEventListener("click", () => {
+    $("newProjectModal").style.display = "flex";
+    $("newProjectName").value = "";
+    $("newProjectName").focus();
+  });
+  $("browseFilesCard").addEventListener("click", () => showScreen("files"));
+  $("voiceChatBtn").addEventListener("click", () => {
+    if (!currentProject) {
+      $("newProjectModal").style.display = "flex";
+      $("newProjectName").value = "";
+      $("newProjectName").focus();
+    } else {
+      showScreen("chat");
+      setTimeout(() => toggleVoiceInput(), 300);
+    }
+  });
+  $("refreshModelsHomeBtn").addEventListener("click", openRefreshModelsModal);
+
+  // Chat
+  $("sendBtn").addEventListener("click", sendMessage);
+  $("stopBtn").addEventListener("click", stopAgent);
+  $("chatInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); sendMessage(); }
+  });
+  $("voiceInputBtn").addEventListener("click", toggleVoiceInput);
+  $("chatBackBtn").addEventListener("click", () => showScreen("home"));
+  $("chatFileBtn").addEventListener("click", () => showScreen("files"));
+  $("chatMenuBtn").addEventListener("click", () => showScreen("preview"));
+
+  // Model select
+  $("modelSelect").addEventListener("change", () => {
+    currentModel = $("modelSelect").value;
+    updateModelDisplay();
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "set_model", model: currentModel }));
+    }
+  });
+
+  // Files
+  $("filesBackBtn").addEventListener("click", () => showScreen("home"));
+  $("refreshFilesBtn").addEventListener("click", loadFileTree);
+  $("closeFileBtn").addEventListener("click", () => {
+    $("fileViewer").style.display = "none";
+    $("fileTree").style.display = "block";
+  });
+
+  // Preview
+  $("previewBackBtn").addEventListener("click", () => showScreen("home"));
+  $("refreshPreviewBtn").addEventListener("click", refreshPreview);
+  $("clearTerminalBtn").addEventListener("click", () => { $("terminalOutput").innerHTML = ""; });
+  document.querySelectorAll(".preview-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".preview-tab").forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      const isPreview = tab.dataset.tab === "preview";
+      $("previewFrameWrap").style.display = isPreview ? "block" : "none";
+      $("terminalWrap").style.display = isPreview ? "none" : "flex";
+    });
+  });
+
+  // New Project Modal
+  $("cancelNewProject").addEventListener("click", () => { $("newProjectModal").style.display = "none"; });
+  $("confirmNewProject").addEventListener("click", () => {
+    const name = $("newProjectName").value.trim();
+    if (name) { createProject(name); $("newProjectModal").style.display = "none"; }
+  });
+  $("newProjectName").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") $("confirmNewProject").click();
+  });
+
+  // Refresh Models Modal
+  $("cancelRefreshModels").addEventListener("click", () => { $("refreshModelsModal").style.display = "none"; });
+  $("confirmRefreshModels").addEventListener("click", confirmUpdateModels);
+  $("selectAllModels").addEventListener("click", () => {
+    $("scrapeModelList").querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = true; });
+  });
+  $("deselectAllModels").addEventListener("click", () => {
+    $("scrapeModelList").querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = false; });
+  });
+
+  // Init
+  connectWS();
+});
