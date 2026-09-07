@@ -65,19 +65,25 @@ function handleMessage(msg) {
     case "user_message":
       addMessage("user", msg.content);
       break;
-    case "agent_text":
-      addMessage("agent", msg.content, msg.isStreaming);
+    case "text_stream":
+      addMessage("agent", msg.text, true);
+      break;
+    case "text_done":
+      // Final text — no action needed, streaming already displayed it
       break;
     case "tool_call":
       addMessage("tool", `${msg.tool}${msg.args ? ": " + JSON.stringify(msg.args).slice(0, 200) : ""}`);
       break;
     case "tool_result":
-      addMessage("tool_result", msg.result);
+      if (msg.result) addMessage("tool_result", msg.result);
       break;
-    case "command_output":
+    case "tool_start":
+      addMessage("tool", `▶ ${msg.tool}${msg.command ? ": " + msg.command : ""}`);
+      break;
+    case "tool_stream":
       const termOut = $("terminalOutput");
       if (termOut) {
-        termOut.innerHTML += msg.output;
+        termOut.innerHTML += msg.data;
         termOut.scrollTop = termOut.scrollHeight;
       }
       break;
