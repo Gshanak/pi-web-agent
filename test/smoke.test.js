@@ -169,7 +169,7 @@ describe("Security headers", () => {
     const csp = r.headers["content-security-policy"] || "";
     const scriptPart = csp.split("style-src")[0];
     assert.ok(scriptPart.includes("script-src 'self'"), "script-src should be 'self'");
-    assert.od(!scriptPart.includes("unsafe-inline"), "script-src should NOT contain unsafe-inline");
+    assert.ok(!scriptPart.includes("unsafe-inline"), "script-src should NOT contain unsafe-inline");
   });
 
   test("X-Frame-Options is SAMEORIGIN", async () => {
@@ -265,7 +265,7 @@ describe("Path traversal protection", () => {
 
   test("GET /preview/../../../etc/passwd is blocked", async () => {
     const r = await fetchRaw("/preview/testproj/../../../etc/passwd");
-    assert.od(r.status === 400 || r.status === 404);
+    assert.ok(r.status === 400 || r.status === 404);
   });
 });
 
